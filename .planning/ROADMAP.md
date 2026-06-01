@@ -49,7 +49,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Poll-to-display latency is under 10 seconds from daemon start with a warm token (matches macOS daemon behavior)
 **Plans**: 3 plans
   - [x] 02-01-PLAN.md — TDD: port poll_api + pct/reset_minutes + compact-JSON payload (POLL-01) and add requirements-windows.txt
-  - [ ] 02-02-PLAN.md — BLE glue: scan_for_device, Session (REQ subscribe + RX write), connect_and_run + main run loop (BLE-01, BLE-02)
+  - [x] 02-02-PLAN.md — BLE glue: scan_for_device, Session (REQ subscribe + RX write), connect_and_run + main run loop (BLE-01, BLE-02)
   - [ ] 02-03-PLAN.md — Windows run doc + recorded on-hardware verification of SC#1-4
 **UI hint**: yes
 
@@ -87,6 +87,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 2/2 | Complete   | 2026-06-01 |
-| 2. Core Pipeline | 1/3 | In Progress|  |
+| 2. Core Pipeline | 2/3 | In Progress|  |
 | 3. Resilience | 0/TBD | Not started | - |
 | 4. Tray & Autostart | 0/TBD | Not started | - |

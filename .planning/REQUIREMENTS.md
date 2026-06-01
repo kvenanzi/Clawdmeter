@@ -14,8 +14,8 @@ Requirements for the Windows daemon port. Each maps to roadmap phases.
 
 ### BLE Connectivity
 
-- [ ] **BLE-01**: Daemon discovers and connects to the Clawdmeter over native Windows BLE using `bleak`'s WinRT backend (scan-first, connect by `BLEDevice`/address, `address_type="random"`, `use_cached_services=False`)
-- [ ] **BLE-02**: Daemon writes usage JSON to the firmware's existing GATT data service (`4c41555a-...0001` RX characteristic) in the unchanged wire format the device expects
+- [x] **BLE-01**: Daemon discovers and connects to the Clawdmeter over native Windows BLE using `bleak`'s WinRT backend (scan-first, connect by `BLEDevice`/address, `address_type="random"`, `use_cached_services=False`)
+- [x] **BLE-02**: Daemon writes usage JSON to the firmware's existing GATT data service (`4c41555a-...0001` RX characteristic) in the unchanged wire format the device expects
 - [ ] **BLE-03**: Daemon auto-reconnects after sleep, out-of-range, or device drop with no user intervention (retry loop handling stale `is_connected` / `Unreachable`)
 
 ### Runtime & Lifecycle
@@ -52,8 +52,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | TOKEN-01 | Phase 1 | Complete |
 | POLL-01 | Phase 2 | Complete |
-| BLE-01 | Phase 2 | Pending |
-| BLE-02 | Phase 2 | Pending |
+| BLE-01 | Phase 2 | Complete |
+| BLE-02 | Phase 2 | Complete |
 | BLE-03 | Phase 3 | Pending |
 | APP-01 | Phase 4 | Pending |
 | APP-02 | Phase 4 | Pending |
