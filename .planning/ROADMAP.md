@@ -17,7 +17,7 @@ startup experience independent of WSL.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation** - GATT encryption gate-check + Windows credential reading + project scaffold
+- [x] **Phase 1: Foundation** - GATT encryption gate-check + Windows credential reading + project scaffold (completed 2026-06-01)
 - [ ] **Phase 2: Core Pipeline** - BLE scan/connect/write + Anthropic API polling end-to-end
 - [ ] **Phase 3: Resilience** - Auto-reconnect after sleep, out-of-range, and device drop
 - [ ] **Phase 4: Tray & Autostart** - System-tray icon + login startup + WSL independence verified
@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Running the script on Windows with Claude Code installed natively prints the token expiry or a recognizable credential field without touching any WSL path
 **Plans**: 2 plans
   - [x] 01-01-PLAN.md — Record GATT-encryption verdict + stand up pytest infra and the RED TOKEN-01 test suite
-  - [ ] 01-02-PLAN.md — Implement the Windows token reader (TDD) + redacted token/expiry output
+  - [x] 01-02-PLAN.md — Implement the Windows token reader (TDD) + redacted token/expiry output
 
 ### Phase 2: Core Pipeline
 **Goal**: The daemon connects to the device over Windows BLE and the display updates with live Anthropic usage data
@@ -83,7 +83,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 1/2 | In Progress|  |
+| 1. Foundation | 2/2 | Complete   | 2026-06-01 |
 | 2. Core Pipeline | 0/TBD | Not started | - |
 | 3. Resilience | 0/TBD | Not started | - |
 | 4. Tray & Autostart | 0/TBD | Not started | - |
