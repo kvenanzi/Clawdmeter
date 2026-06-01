@@ -1,21 +1,22 @@
 ---
 phase: 01-foundation
 verified: 2026-06-01T00:00:00Z
-status: human_needed
-score: 2/3 must-haves verified (SC3 requires native Windows machine)
+status: passed
+score: 3/3 must-haves verified (SC3 confirmed via manual native-Windows run 2026-06-01)
 overrides_applied: 0
 human_verification:
   - test: "Run `python daemon\\claude_usage_daemon_windows.py` on a native Windows machine that has Claude Code installed and `claude login` completed"
     expected: "Prints a redacted token line (e.g. `Token OK (sk-ant-…XXXX), expires YYYY-MM-DD HH:MM UTC`) sourced from `%USERPROFILE%\\.claude\\.credentials.json`. No `\\\\wsl$` path is accessed. Exit code 0."
     why_human: "Success Criterion #3 requires a real native-Windows Python process with a live Windows-local OAuth token at the D-02 primary path. Cannot be exercised from WSL/Linux because Path.home() resolves to the Linux home directory, not a Windows user profile. No CI substitute exists."
+    result: "PASSED (2026-06-01) — ran from native-Windows PowerShell, output `Token OK (sk-ant-…jgAA), expires 2026-06-02 02:09 UTC`. No WSL warning emitted (sys.platform == win32), confirming native path resolution; real-token expiry decoded correctly."
 ---
 
 # Phase 01: Foundation Verification Report
 
 **Phase Goal:** The GATT encryption question is answered and the daemon can read a valid Windows-local OAuth token
 **Verified:** 2026-06-01
-**Status:** human_needed
-**Re-verification:** No — initial verification
+**Status:** passed
+**Re-verification:** Yes — SC#3 confirmed via manual native-Windows run (2026-06-01)
 
 ## Goal Achievement
 
