@@ -141,38 +141,58 @@ def test_read_expiry_non_dict_json_returns_unknown(tmp_path, monkeypatch):
 
 # --- WR-02: D-06 redaction requirement must be tested ---
 
-def test_main_output_redacts_token(monkeypatch):
-    """__main__ prints only the last-4 redacted form; full token must never appear in stdout (D-06)."""
+def test_main_emits_linux_warning(monkeypatch):
+    """__main__ prints a non-fatal stderr warning on non-Windows platforms (new async runner).
+
+    Phase 2 replaced the Phase 1 token-printing __main__ with asyncio.run(main()). The
+    new contract:
+      - On non-Windows: emits "WinRT BLE will not be available" to stderr before the loop.
+      - Enters the async scan/connect/poll loop (no longer prints token/expiry).
+    This test interrupts the process after 3s to capture the warning without hanging.
+    """
     env = {**__import__("os").environ, "CLAUDE_CREDENTIALS_PATH": str(FIXTURES / "credentials_nested.json")}
     env.pop("CLAUDE_CONFIG_DIR", None)
     module = str(Path(__file__).parent.parent / "claude_usage_daemon_windows.py")
-    result = subprocess.run(
-        [sys.executable, module],
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert result.returncode == 0, f"Expected exit 0, got {result.returncode}: {result.stderr}"
-    # Full token must NOT appear in stdout
-    assert "sk-ant-test-1234" not in result.stdout, "Full token leaked to stdout (D-06 violation)"
-    # Redacted last-4 suffix MUST appear
-    assert "…1234" in result.stdout or "1234" in result.stdout, (
-        f"Expected last-4 chars '1234' in stdout, got: {result.stdout!r}"
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, module],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=3,
+        )
+        # If it exits cleanly, verify warning was emitted
+        assert "WinRT BLE will not be available" in result.stderr
+    except subprocess.TimeoutExpired as exc:
+        # Process is hanging in the scan loop — expected behavior on Linux.
+        # The warning should appear in the partial stderr captured so far.
+        partial_stderr = (exc.stderr or b"").decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        assert "WinRT BLE will not be available" in partial_stderr, (
+            f"Expected Linux/WSL warning in stderr before scan loop, got: {partial_stderr!r}"
+        )
 
 
-def test_main_empty_token_exits_one(tmp_path, monkeypatch):
-    """__main__ exits 1 with actionable message when credential file contains empty accessToken."""
-    creds = tmp_path / ".credentials.json"
-    creds.write_text(json.dumps({"accessToken": ""}))
-    env = {**__import__("os").environ, "CLAUDE_CREDENTIALS_PATH": str(creds)}
+def test_main_emits_linux_warning_before_loop(monkeypatch):
+    """__main__ stderr warning appears before the async scan loop starts on Linux/WSL."""
+    import signal as _signal
+    env = {**__import__("os").environ}
     env.pop("CLAUDE_CONFIG_DIR", None)
+    env.pop("CLAUDE_CREDENTIALS_PATH", None)
     module = str(Path(__file__).parent.parent / "claude_usage_daemon_windows.py")
-    result = subprocess.run(
-        [sys.executable, module],
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert result.returncode == 1, f"Expected exit 1, got {result.returncode}"
-    assert "No Windows token found" in result.stdout
+    try:
+        result = subprocess.run(
+            [sys.executable, module],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=3,
+        )
+        # If it exits cleanly (KeyboardInterrupt path), check warning
+        assert "WinRT BLE will not be available" in result.stderr
+    except subprocess.TimeoutExpired as exc:
+        # Process is hanging in the scan loop — expected behavior on Linux.
+        # The warning should appear in the partial stderr captured so far.
+        partial_stderr = (exc.stderr or b"").decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        assert "WinRT BLE will not be available" in partial_stderr, (
+            f"Expected Linux/WSL warning in stderr before scan loop, got: {partial_stderr!r}"
+        )

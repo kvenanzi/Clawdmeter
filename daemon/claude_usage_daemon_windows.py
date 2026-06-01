@@ -224,19 +224,114 @@ def _read_expiry() -> str:
     return "expiry unknown"
 
 
+async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
+    """Connect to device and poll until disconnected or stopped.
+
+    Returns True if at least one successful write occurred.
+    """
+    log(f"Connecting to {device.address}...")
+    # D-05: pass BLEDevice (not address string), address_type="random" (NimBLE
+    # static-random), use_cached_services=False (DIY firmware — WinRT GATT cache
+    # may be stale after firmware reflash).
+    client = BleakClient(
+        device,
+        address_type="random",
+        use_cached_services=False,
+    )
+    try:
+        await client.connect()
+    except (BleakError, asyncio.TimeoutError) as e:
+        log(f"Connection failed: {e}")
+        return False
+
+    if not client.is_connected:
+        log("Connection failed (no error but not connected)")
+        return False
+
+    log("Connected")
+    session = Session(client)
+    await session.setup_refresh_subscription()
+
+    last_poll = 0.0  # D-03: poll immediately on first connect
+    used_successfully = False
+    try:
+        while client.is_connected and not stop_event.is_set():
+            now = time.time()
+            elapsed = now - last_poll
+            if session.refresh_requested.is_set() or elapsed >= POLL_INTERVAL:
+                session.refresh_requested.clear()
+                token = read_token()  # D-09: fresh each cycle
+                if not token:
+                    log("No token; skipping poll")
+                else:
+                    payload = await poll_api(token)
+                    if payload is not None:
+                        if await session.write_payload(payload):
+                            last_poll = time.time()
+                            used_successfully = True
+
+            try:
+                await asyncio.wait_for(session.refresh_requested.wait(), timeout=TICK)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        try:
+            await client.disconnect()
+        except BleakError:
+            pass
+
+    log("Device disconnected" if not stop_event.is_set() else "Stopping")
+    return used_successfully
+
+
+async def main() -> None:
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def _stop(*_args: object) -> None:
+        log("Daemon stopping")
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _stop)
+        except NotImplementedError:
+            # Windows: add_signal_handler not supported; fall back to signal.signal
+            signal.signal(sig, _stop)
+
+    log("=== Claude Usage Tracker Daemon (BLE, Windows) ===")
+    log(f"Poll interval: {POLL_INTERVAL}s")
+
+    backoff = 1
+    while not stop_event.is_set():
+        device = await scan_for_device()
+        if not device:
+            log(f"Device not found, retrying in {backoff}s...")
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=backoff)
+            except asyncio.TimeoutError:
+                pass
+            backoff = min(backoff * 2, 60)
+            continue
+
+        ok = await connect_and_run(device, stop_event)
+        if not ok:
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=backoff)
+            except asyncio.TimeoutError:
+                pass
+            backoff = min(backoff * 2, 60)
+        else:
+            backoff = 1
+
+
 if __name__ == "__main__":
     if sys.platform != "win32":
         print(
-            "Warning: running under Linux/WSL — Windows credential paths will "
-            "not resolve correctly.",
+            "Warning: running under Linux/WSL — WinRT BLE will not be available.",
             file=sys.stderr,
         )
-    token = read_token()
-    if not token:
-        print(
-            "No Windows token found — install Claude Code natively on Windows "
-            "and run 'claude login'."
-        )
-        sys.exit(1)
-    expiry_str = _read_expiry()
-    print(f"Token OK (sk-ant-…{token[-4:]}), expires {expiry_str}")
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        sys.exit(0)
