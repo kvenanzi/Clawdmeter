@@ -63,7 +63,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Moving the device out of BLE range and back causes the daemon to reconnect automatically with no user action
   3. Powering the Clawdmeter off and back on causes the daemon to pick it back up on the next scan cycle
   4. The daemon never requires a restart to recover from any of the above scenarios
-**Plans**: TBD
+**Plans**: 3 plans
+  - [ ] 03-01-PLAN.md — TDD: connect-retry wrapper (D-01) + zombie-link consecutive-failure break (D-03) in connect_and_run
+  - [ ] 03-02-PLAN.md — TDD: split fast-reconnect vs slow-search backoff (D-05) in main()
+  - [ ] 03-03-PLAN.md — Manual on-hardware reconnect record for SC#1-4 (D-06 hardware half)
 
 ### Phase 4: Tray & Autostart
 **Goal**: The daemon starts at Windows login, shows connection status in the system tray, and works entirely independently of WSL
@@ -88,5 +91,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Foundation | 2/2 | Complete   | 2026-06-01 |
 | 2. Core Pipeline | 3/3 | Complete   | 2026-06-01 |
-| 3. Resilience | 0/TBD | Not started | - |
+| 3. Resilience | 0/3 | Not started | - |
 | 4. Tray & Autostart | 0/TBD | Not started | - |
