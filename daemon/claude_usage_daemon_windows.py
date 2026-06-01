@@ -90,6 +90,41 @@ async def poll_api(token: str) -> dict | None:
     return payload
 
 
+async def scan_for_device():
+    """Scan for DEVICE_NAME and return the BLEDevice, or None."""
+    log(f"Scanning for '{DEVICE_NAME}' ({SCAN_TIMEOUT}s)...")
+    device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=SCAN_TIMEOUT)
+    if device:
+        log(f"Found: {device.address}")
+    return device  # BLEDevice or None — NOT an address string
+
+
+class Session:
+    def __init__(self, client: BleakClient) -> None:
+        self.client = client
+        self.refresh_requested = asyncio.Event()
+
+    def _on_refresh(self, _char, _data: bytearray) -> None:
+        log("Refresh requested by device")
+        self.refresh_requested.set()
+
+    async def setup_refresh_subscription(self) -> None:
+        try:
+            await self.client.start_notify(REQ_CHAR_UUID, self._on_refresh)
+        except (BleakError, ValueError) as e:
+            log(f"Refresh subscription unavailable: {e}")
+
+    async def write_payload(self, payload: dict) -> bool:
+        data = json.dumps(payload, separators=(",", ":")).encode()
+        log(f"Sending: {data.decode()}")
+        try:
+            await self.client.write_gatt_char(RX_CHAR_UUID, data, response=False)
+            return True
+        except BleakError as e:
+            log(f"Write failed: {e}")
+            return False
+
+
 def _extract_access_token(blob: str) -> str | None:
     """Pull the accessToken out of a credentials blob.
 
