@@ -1,0 +1,27 @@
+# Normalize line endings so the repo behaves the same whether git is run from
+# WSL/Linux/macOS or natively on Windows. Without this, Git-for-Windows
+# (core.autocrlf=true by default) rewrites the working tree to CRLF over the
+# \\wsl.localhost mount, and WSL git then reports every file as fully modified.
+#
+# `text=auto` lets git auto-detect text vs binary; `eol=lf` forces LF on
+# checkout for ALL platforms, overriding each user's core.autocrlf setting.
+* text=auto eol=lf
+
+# Scripts and source that MUST stay LF (CRLF breaks shebangs / interpreters on
+# macOS & Linux: `bad interpreter: /usr/bin/env python3^M`).
+*.sh   text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.json text eol=lf
+*.c    text eol=lf
+*.h    text eol=lf
+*.ini  text eol=lf
+
+# Binary assets — never apply line-ending or text filters.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.bin  binary
+*.ico  binary
