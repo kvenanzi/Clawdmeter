@@ -27,6 +27,8 @@ thinking about it — independent of whether WSL is running.
 - ✓ macOS host daemon (`daemon/claude_usage_daemon.py`, Python + `bleak` + `httpx`) polls the Anthropic API and pushes usage JSON over BLE — existing
 - ✓ Linux host daemon (`daemon/claude-usage-daemon.sh`, bash + `bluetoothctl`/`busctl`/`curl`) — existing
 - ✓ Daemon resilience pattern: connect-by-name → cache resolved MAC → drop cache + bluez entry on failure; ESP-triggered refresh requests — existing
+- ✓ GATT custom data service confirmed UNENCRYPTED (no pairing / firmware change needed) — Validated in Phase 1: Foundation
+- ✓ Windows-local OAuth token reader (`daemon/claude_usage_daemon_windows.py`, stdlib-only) reads the token from native-Windows credential paths and prints a redacted confirmation — Validated in Phase 1: Foundation (TOKEN-01; native-Windows end-to-end run pending manual confirmation)
 
 ### Active
 
@@ -110,4 +112,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-01 after initialization*
+*Last updated: 2026-06-01 after Phase 1 (Foundation) complete*
