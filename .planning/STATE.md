@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-06-01T21:32:44.562Z"
-last_activity: 2026-06-01 -- Phase 02 planning complete
+last_updated: "2026-06-01T21:54:49.023Z"
+last_activity: 2026-06-01
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 5
-  completed_plans: 2
+  completed_plans: 3
   percent: 25
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** The Clawdmeter stays connected on Windows, all the time, without the user thinking about it — independent of whether WSL is running.
-**Current focus:** Phase 2 — core pipeline
+**Current focus:** Phase 02 — core-pipeline
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
+Phase: 02 (core-pipeline) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-06-01 -- Phase 02 planning complete
+Last activity: 2026-06-01
 
-Progress: [██████████] 100%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Progress: [██████████] 100%
 
 *Updated after each plan completion*
 | Phase 01-foundation P02 | 5min | 2 tasks | 1 files |
+| Phase 02-core-pipeline P01 | 12 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,8 @@ Recent decisions affecting current work:
 - [Phase ?]: D-08 enforced: _extract_access_token copied verbatim from macOS daemon (not imported)
 - [Phase ?]: D-05 enforced: stdlib-only Windows scaffold (no bleak/httpx/asyncio)
 - [Phase ?]: expiresAt divided by 1000 — JS-convention ms to Python seconds
+- [Phase ?]: POLL-01 complete
+- [Phase ?]: D-04: disk cache deferred to Phase 3
 
 ### Pending Todos
 
@@ -89,6 +92,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-01T21:15:23.334Z
+Last session: 2026-06-01T21:54:19.673Z
 Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-core-pipeline/02-CONTEXT.md
+Resume file: None
