@@ -18,7 +18,7 @@ startup experience independent of WSL.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation** - GATT encryption gate-check + Windows credential reading + project scaffold (completed 2026-06-01)
-- [ ] **Phase 2: Core Pipeline** - BLE scan/connect/write + Anthropic API polling end-to-end
+- [x] **Phase 2: Core Pipeline** - BLE scan/connect/write + Anthropic API polling end-to-end (completed 2026-06-01)
 - [ ] **Phase 3: Resilience** - Auto-reconnect after sleep, out-of-range, and device drop
 - [ ] **Phase 4: Tray & Autostart** - System-tray icon + login startup + WSL independence verified
 
@@ -50,7 +50,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
   - [x] 02-01-PLAN.md — TDD: port poll_api + pct/reset_minutes + compact-JSON payload (POLL-01) and add requirements-windows.txt
   - [x] 02-02-PLAN.md — BLE glue: scan_for_device, Session (REQ subscribe + RX write), connect_and_run + main run loop (BLE-01, BLE-02)
-  - [ ] 02-03-PLAN.md — Windows run doc + recorded on-hardware verification of SC#1-4
+  - [x] 02-03-PLAN.md — Windows run doc + recorded on-hardware verification of SC#1-4
 **UI hint**: yes
 
 ### Phase 3: Resilience
@@ -87,6 +87,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 2/2 | Complete   | 2026-06-01 |
-| 2. Core Pipeline | 2/3 | In Progress|  |
+| 2. Core Pipeline | 3/3 | Complete   | 2026-06-01 |
 | 3. Resilience | 0/TBD | Not started | - |
 | 4. Tray & Autostart | 0/TBD | Not started | - |
