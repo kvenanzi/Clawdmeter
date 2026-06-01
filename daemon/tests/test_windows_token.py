@@ -4,6 +4,8 @@
 Run: python -m pytest daemon/tests/test_windows_token.py -x -q
 """
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -106,3 +108,71 @@ def test_read_expiry_decodes_milliseconds(monkeypatch):
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     result = _read_expiry()
     assert result.startswith("2286-"), f"Expected year 2286, got: {result}"
+
+
+# --- WR-03: regression guard for CR-01 (empty/blank token must not be accepted) ---
+
+def test_extract_empty_token_is_none():
+    """_extract_access_token returns None for empty accessToken (CR-01 regression guard)."""
+    assert _extract_access_token('{"accessToken": ""}') is None
+    assert _extract_access_token('{}') is None
+
+
+
+def test_read_token_empty_credential_file_returns_none(tmp_path, monkeypatch):
+    """read_token() returns None (not empty string) when credential file has empty accessToken."""
+    creds = tmp_path / ".credentials.json"
+    creds.write_text(json.dumps({"accessToken": ""}))
+    monkeypatch.setenv("CLAUDE_CREDENTIALS_PATH", str(creds))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    assert read_token() is None
+
+
+# --- WR-01: regression guard for _read_expiry with non-dict top-level JSON ---
+
+def test_read_expiry_non_dict_json_returns_unknown(tmp_path, monkeypatch):
+    """_read_expiry() returns 'expiry unknown' (not crash) for non-dict top-level JSON (WR-01)."""
+    creds = tmp_path / ".credentials.json"
+    creds.write_text("[1, 2, 3]")
+    monkeypatch.setenv("CLAUDE_CREDENTIALS_PATH", str(creds))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    assert _read_expiry() == "expiry unknown"
+
+
+# --- WR-02: D-06 redaction requirement must be tested ---
+
+def test_main_output_redacts_token(monkeypatch):
+    """__main__ prints only the last-4 redacted form; full token must never appear in stdout (D-06)."""
+    env = {**__import__("os").environ, "CLAUDE_CREDENTIALS_PATH": str(FIXTURES / "credentials_nested.json")}
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    module = str(Path(__file__).parent.parent / "claude_usage_daemon_windows.py")
+    result = subprocess.run(
+        [sys.executable, module],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, f"Expected exit 0, got {result.returncode}: {result.stderr}"
+    # Full token must NOT appear in stdout
+    assert "sk-ant-test-1234" not in result.stdout, "Full token leaked to stdout (D-06 violation)"
+    # Redacted last-4 suffix MUST appear
+    assert "…1234" in result.stdout or "1234" in result.stdout, (
+        f"Expected last-4 chars '1234' in stdout, got: {result.stdout!r}"
+    )
+
+
+def test_main_empty_token_exits_one(tmp_path, monkeypatch):
+    """__main__ exits 1 with actionable message when credential file contains empty accessToken."""
+    creds = tmp_path / ".credentials.json"
+    creds.write_text(json.dumps({"accessToken": ""}))
+    env = {**__import__("os").environ, "CLAUDE_CREDENTIALS_PATH": str(creds)}
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    module = str(Path(__file__).parent.parent / "claude_usage_daemon_windows.py")
+    result = subprocess.run(
+        [sys.executable, module],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 1, f"Expected exit 1, got {result.returncode}"
+    assert "No Windows token found" in result.stdout
