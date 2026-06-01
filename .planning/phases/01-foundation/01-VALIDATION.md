@@ -1,8 +1,8 @@
 ---
 phase: 1
 slug: foundation
-status: draft
-nyquist_compliant: false
+status: approved
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-06-01
 ---
@@ -48,18 +48,22 @@ created: 2026-06-01
 | TBD (planner) | 0X | 1 | TOKEN-01 | — | `_extract_access_token()` handles nested `claudeAiOauth` shape (real Windows format) | unit | `python -m pytest daemon/tests/test_windows_token.py::test_extract_nested_shape -x` | ❌ W0 | ⬜ pending |
 | TBD (planner) | 0X | 1 | TOKEN-01 | — | `_extract_access_token()` handles direct `accessToken` shape | unit | `python -m pytest daemon/tests/test_windows_token.py::test_extract_direct_shape -x` | ❌ W0 | ⬜ pending |
 | TBD (planner) | 0X | 1 | TOKEN-01 | — | `read_token()` returns `None` when no candidate path exists | unit | `python -m pytest daemon/tests/test_windows_token.py::test_read_token_no_file -x` | ❌ W0 | ⬜ pending |
+| TBD (planner) | 0X | 1 | TOKEN-01 | — | `read_token()` honours official `CLAUDE_CONFIG_DIR` override (research-derived extension of D-03) | unit | `python -m pytest daemon/tests/test_windows_token.py::test_read_token_config_dir_override -x` | ❌ W0 | ⬜ pending |
+| TBD (planner) | 0X | 2 | TOKEN-01 | — | `_read_expiry()` decodes `expiresAt` epoch-**milliseconds** correctly (fixture `9999999999000` → year 2286, NOT ~57000) | unit | `python -m pytest daemon/tests/test_windows_token.py::test_read_expiry_decodes_milliseconds -x` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky. Task IDs are assigned by the planner; the planner must map each TOKEN-01 behavior above to a concrete task with an `<automated>` verify or a Wave 0 dependency.*
+
+**Test set: 9 cases.** The original 7 TOKEN-01 cases plus two coverage additions from the plan-checker pass: `test_read_token_config_dir_override` (the `CLAUDE_CONFIG_DIR` branch — official Claude override the implementation honours but D-03 did not name; tracked here as an accepted extension) and `test_read_expiry_decodes_milliseconds` (asserts the ms→s division so the year-57000 pitfall cannot regress).
 
 ---
 
 ## Wave 0 Requirements
 
 - [ ] `daemon/tests/__init__.py` — makes `daemon/tests/` a package
-- [ ] `daemon/tests/test_windows_token.py` — covers all 7 TOKEN-01 unit cases above
+- [ ] `daemon/tests/test_windows_token.py` — covers all 9 unit cases above
 - [ ] `daemon/tests/fixtures/credentials_nested.json` — `{"claudeAiOauth": {"accessToken": "sk-ant-test-1234", "expiresAt": 9999999999000, "scopes": []}}`
 - [ ] `daemon/tests/fixtures/credentials_direct.json` — `{"accessToken": "sk-ant-test-5678"}`
-- [ ] pytest installable: `pip install pytest` (verify: `python -m pytest --version`)
+- [ ] pytest available: the Wave 0 task (PLAN 01-01 Task 2) runs `python -m pytest --version` and `pip install pytest` if it is missing — so a fresh machine is self-sufficient, not reliant on a pre-installed pytest. (pytest 8.4.2 is already present in the current dev env.)
 
 ---
 
@@ -73,11 +77,13 @@ created: 2026-06-01
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 5s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references (incl. pytest availability via PLAN 01-01 Task 2)
+- [x] No watch-mode flags
+- [x] Feedback latency < 5s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+*`wave_0_complete` stays `false` until execution actually builds the test package and fixtures — it is an execution-time flag, not a planning-time one.*
+
+**Approval:** approved 2026-06-01

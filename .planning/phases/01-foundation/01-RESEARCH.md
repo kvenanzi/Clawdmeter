@@ -407,17 +407,15 @@ if __name__ == "__main__":
 
 **All other claims were verified or cited — no user confirmation needed for those.**
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **`CLAUDE_CONFIG_DIR` priority relative to `CLAUDE_CREDENTIALS_PATH` (D-03)**
+1. **`CLAUDE_CONFIG_DIR` priority relative to `CLAUDE_CREDENTIALS_PATH` (D-03)** — **RESOLVED (planning, 2026-06-01).**
    - What we know: Both are env-var overrides; `CLAUDE_CONFIG_DIR` is the official Claude override, `CLAUDE_CREDENTIALS_PATH` is the project-specific one.
-   - What's unclear: Which should win when both are set?
-   - Recommendation: `CLAUDE_CREDENTIALS_PATH` (explicit project override) takes precedence over `CLAUDE_CONFIG_DIR` (official app config). One-liner in `read_token()` — planner chooses order.
+   - **Decision:** `CLAUDE_CREDENTIALS_PATH` (explicit project override, D-03) wins first; `CLAUDE_CONFIG_DIR` (official app config) is checked second; the three D-02 candidates are last. Implemented in `_windows_credential_candidates()` (PLAN 01-02 Task 1). `CLAUDE_CONFIG_DIR` is an accepted research-derived extension of D-03 (it is the documented official override) and is covered by a dedicated unit test (`test_read_token_config_dir_override`).
 
-2. **`expiresAt` availability for D-06 output**
+2. **`expiresAt` availability for D-06 output** — **RESOLVED (planning, 2026-06-01).**
    - What we know: `_extract_access_token()` returns only the token string; expiry lives in the raw JSON.
-   - What's unclear: Should `read_token()` return a richer type (token + expiry), or should `__main__` parse the file twice?
-   - Recommendation: Add a separate `_read_credentials_dict()` helper that returns the parsed dict; `__main__` calls it once for both token and expiry. This is a two-line addition compatible with D-05's minimal scope.
+   - **Decision:** Add a minimal `_read_expiry()` helper that re-runs `_windows_credential_candidates()`, reads the first-hit file, pulls `claudeAiOauth.expiresAt` (epoch ms → `/1000`), and returns a formatted date string (`"expiry unknown"` on miss). `__main__` calls `read_token()` for the token and `_read_expiry()` for the date. Compatible with D-05's minimal scope; covered by `test_read_expiry_decodes_milliseconds` (PLAN 01-02 Task 2). The shared `_windows_credential_candidates()` call avoids duplicated path logic (REFACTOR step).
 
 ## Environment Availability
 
