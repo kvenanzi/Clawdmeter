@@ -29,13 +29,13 @@ thinking about it — independent of whether WSL is running.
 - ✓ Daemon resilience pattern: connect-by-name → cache resolved MAC → drop cache + bluez entry on failure; ESP-triggered refresh requests — existing
 - ✓ GATT custom data service confirmed UNENCRYPTED (no pairing / firmware change needed) — Validated in Phase 1: Foundation
 - ✓ Windows-local OAuth token reader (`daemon/claude_usage_daemon_windows.py`, stdlib-only) reads the token from native-Windows credential paths and prints a redacted confirmation — Validated in Phase 1: Foundation (TOKEN-01; native-Windows end-to-end run pending manual confirmation)
+- ✓ Native Windows daemon polls the Anthropic API and derives the `{s,sr,w,wr,st,ok}` session+weekly utilization payload (httpx-mocked unit tests) — Validated in Phase 2: Core Pipeline (POLL-01)
+- ✓ Native Windows daemon scans/connects over BLE (`bleak` WinRT, `address_type="random"`, `use_cached_services=False`) and writes usage JSON to the GATT RX characteristic — Validated in Phase 2: Core Pipeline (BLE-01, BLE-02); confirmed on hardware (device left waiting screen, showed percentages)
 
 ### Active
 
 <!-- This project's scope. Building toward these. -->
 
-- [ ] Native Windows host daemon that reads the Windows-local Claude OAuth token and polls the Anthropic API
-- [ ] Daemon connects to Clawdmeter over native Windows BLE (`bleak` WinRT backend) and pushes usage JSON to the GATT data service
 - [ ] Daemon auto-reconnects after sleep / out-of-range / device drops, with no user intervention
 - [ ] Daemon runs as a login-startup tray app showing connection status with a quit action
 - [ ] Daemon is fully independent of WSL — works with the WSL distro stopped
@@ -112,4 +112,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-01 after Phase 1 (Foundation) complete*
+*Last updated: 2026-06-01 after Phase 2 (Core Pipeline) complete — Windows daemon polls the Anthropic API and pushes usage JSON over BLE end-to-end (verified on hardware). Next: Phase 3 (Resilience) — auto-reconnect.*
