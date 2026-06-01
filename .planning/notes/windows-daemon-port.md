@@ -70,3 +70,25 @@ Sources: bleak Windows backend & troubleshooting docs; bleak issues #367, #1291,
 - Mirror the macOS daemon's discovery/cache/reconnect logic; the resolved-MAC
   cache lives under `~/.config/claude-usage-monitor/` on *nix — pick a Windows
   equivalent (e.g. `%APPDATA%\claude-usage-monitor\`).
+
+## GATT encryption gate — verdict (D-01)
+
+**Status: CONFIRMED UNENCRYPTED** — verified 2026-06-01 by reading
+`firmware/src/ble.cpp` lines 185–199 directly.
+
+The custom data-service characteristics (service UUID `4c41555a-…0001`) are
+created with plain NimBLE property flags:
+
+- **RX** (`…0002`): `NIMBLE_PROPERTY::WRITE | WRITE_NR` — no `_ENC` / `_AUTHEN` / `_AUTHOR`
+- **TX** (`…0003`): `NIMBLE_PROPERTY::READ | NOTIFY` — plain
+- **REQ** (`…0004`): `NIMBLE_PROPERTY::NOTIFY` — plain
+
+The NimBLE library does define encrypted variants (`READ_ENC`, `WRITE_ENC`,
+`READ_AUTHEN`, `WRITE_AUTHEN`, etc.) — they are used on the HID keyboard
+characteristics but are absent from the custom data service.
+
+**Consequence:** The Windows daemon needs no manual Bluetooth pairing and no
+firmware change. The "encrypted characteristics" contingency from the BLE
+research section above is closed.
+
+*Satisfies Phase 1 Success Criterion #1.*
