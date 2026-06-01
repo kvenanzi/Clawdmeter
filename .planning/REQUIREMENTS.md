@@ -9,7 +9,7 @@ Requirements for the Windows daemon port. Each maps to roadmap phases.
 
 ### Token & Polling
 
-- [ ] **TOKEN-01**: Daemon reads the Claude OAuth token from a native-Windows credentials path (no WSL/`\\wsl$` access)
+- [x] **TOKEN-01**: Daemon reads the Claude OAuth token from a native-Windows credentials path (no WSL/`\\wsl$` access)
 - [ ] **POLL-01**: Daemon polls the Anthropic API and derives session + weekly rate-limit utilization, mirroring the macOS daemon's logic
 
 ### BLE Connectivity
@@ -50,7 +50,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TOKEN-01 | Phase 1 | Pending |
+| TOKEN-01 | Phase 1 | Complete |
 | POLL-01 | Phase 2 | Pending |
 | BLE-01 | Phase 2 | Pending |
 | BLE-02 | Phase 2 | Pending |

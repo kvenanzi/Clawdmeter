@@ -34,7 +34,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. A minimal `daemon/claude_usage_daemon_windows.py` skeleton exists with a `read_token()` function that successfully reads the OAuth token from the Windows-local `%APPDATA%\..\Local\Claude\.credentials.json` path (or equivalent native-Windows path) and returns the access token string
   3. Running the script on Windows with Claude Code installed natively prints the token expiry or a recognizable credential field without touching any WSL path
 **Plans**: 2 plans
-  - [ ] 01-01-PLAN.md — Record GATT-encryption verdict + stand up pytest infra and the RED TOKEN-01 test suite
+  - [x] 01-01-PLAN.md — Record GATT-encryption verdict + stand up pytest infra and the RED TOKEN-01 test suite
   - [ ] 01-02-PLAN.md — Implement the Windows token reader (TDD) + redacted token/expiry output
 
 ### Phase 2: Core Pipeline
@@ -83,7 +83,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 0/2 | Not started | - |
+| 1. Foundation | 1/2 | In Progress|  |
 | 2. Core Pipeline | 0/TBD | Not started | - |
 | 3. Resilience | 0/TBD | Not started | - |
 | 4. Tray & Autostart | 0/TBD | Not started | - |
