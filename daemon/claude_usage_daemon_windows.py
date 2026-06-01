@@ -98,6 +98,8 @@ def _read_expiry() -> str:
             expires_ms = oauth.get("expiresAt")
             if expires_ms is None:
                 return "expiry unknown"
+            # CRITICAL: expiresAt is JS-convention epoch milliseconds; divide by 1000
+            # before fromtimestamp (Python expects seconds). Raw value -> year ~57000.
             dt = datetime.datetime.fromtimestamp(
                 expires_ms / 1000, tz=datetime.timezone.utc
             )
