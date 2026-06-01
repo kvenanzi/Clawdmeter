@@ -1,0 +1,90 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: planning
+stopped_at: Phase 1 context gathered
+last_updated: "2026-06-01T18:15:01.366Z"
+last_activity: 2026-06-01 — Roadmap created
+progress:
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
+---
+
+# Project State
+
+## Project Reference
+
+See: .planning/PROJECT.md (updated 2026-06-01)
+
+**Core value:** The Clawdmeter stays connected on Windows, all the time, without the user thinking about it — independent of whether WSL is running.
+**Current focus:** Phase 1 — Foundation
+
+## Current Position
+
+Phase: 1 of 4 (Foundation)
+Plan: 0 of TBD in current phase
+Status: Ready to plan
+Last activity: 2026-06-01 — Roadmap created
+
+Progress: [░░░░░░░░░░] 0%
+
+## Performance Metrics
+
+**Velocity:**
+
+- Total plans completed: 0
+- Average duration: -
+- Total execution time: 0 hours
+
+**By Phase:**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| - | - | - | - |
+
+**Recent Trend:**
+
+- Last 5 plans: -
+- Trend: -
+
+*Updated after each plan completion*
+
+## Accumulated Context
+
+### Decisions
+
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
+
+- Pre-planning: Native Windows daemon (not BT passthrough to WSL) — passthrough steals BLE and dies on WSL shutdown
+- Pre-planning: Port Python/macOS daemon, not bash/Linux — `bleak` WinRT backend + cross-platform `httpx`
+- Pre-planning: Login-startup tray app (not Service/Scheduled Task) — lighter, visible status
+- Pre-planning: Read native-Windows token (install Claude Code on Windows) — WSL-independent
+
+### Pending Todos
+
+2 pending todos in `.planning/todos/pending/`:
+
+- `verify-gatt-characteristics-unencrypted.md` — de-risk gate for Phase 1 (HIGH priority)
+- `implement-windows-daemon-tray.md` — tray implementation reference for Phase 4
+
+### Blockers/Concerns
+
+- Phase 1: GATT encryption status unknown. If characteristics require bonding, Phase 2 BLE connection approach must include a one-time Windows pairing step. Resolved by Phase 1 gate-check.
+
+## Deferred Items
+
+| Category | Item | Status | Deferred At |
+|----------|------|--------|-------------|
+| Packaging | PKG-01: PyInstaller one-file exe | v2 | Requirements definition |
+| Run model | PKG-02: Windows Service / Scheduled Task | v2 | Requirements definition |
+
+## Session Continuity
+
+Last session: 2026-06-01T18:15:01.342Z
+Stopped at: Phase 1 context gathered
+Resume file: .planning/phases/01-foundation/01-CONTEXT.md
