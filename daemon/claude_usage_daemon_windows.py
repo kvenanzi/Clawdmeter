@@ -1,16 +1,93 @@
 #!/usr/bin/env python3
-"""Claude Usage Tracker Daemon — Windows scaffold (Phase 1).
+"""Claude Usage Tracker Daemon — Windows (Phase 2).
 
-Reads the Claude OAuth token from the native-Windows credentials path.
-Phase 1: token read + redacted verification only. BLE/API deferred to later phases.
+Reads the Claude OAuth token from the native-Windows credentials path and
+polls the Anthropic API for rate-limit utilization data. BLE glue added in
+later plans.
 """
 
+import asyncio
 import datetime
 import json
 import os
 import re
+import signal
 import sys
+import time
 from pathlib import Path
+
+import httpx
+from bleak import BleakClient, BleakScanner
+from bleak.exc import BleakError
+
+DEVICE_NAME = "Claude Controller"
+SERVICE_UUID = "4c41555a-4465-7669-6365-000000000001"
+RX_CHAR_UUID = "4c41555a-4465-7669-6365-000000000002"
+REQ_CHAR_UUID = "4c41555a-4465-7669-6365-000000000004"
+
+POLL_INTERVAL = 60
+TICK = 5
+SCAN_TIMEOUT = 8.0
+
+API_URL = "https://api.anthropic.com/v1/messages"
+API_HEADERS_TEMPLATE = {
+    "anthropic-version": "2023-06-01",
+    "anthropic-beta": "oauth-2025-04-20",
+    "Content-Type": "application/json",
+    "User-Agent": "claude-code/2.1.5",
+}
+API_BODY = {
+    "model": "claude-haiku-4-5-20251001",
+    "max_tokens": 1,
+    "messages": [{"role": "user", "content": "hi"}],
+}
+
+
+def log(msg: str) -> None:
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+async def poll_api(token: str) -> dict | None:
+    headers = dict(API_HEADERS_TEMPLATE)
+    headers["Authorization"] = f"Bearer {token}"
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as http:
+            resp = await http.post(API_URL, headers=headers, json=API_BODY)
+    except httpx.HTTPError as e:
+        log(f"API call failed: {e}")
+        return None
+    if resp.status_code >= 400:
+        log(f"API HTTP {resp.status_code}: {resp.text[:200]}")
+        return None
+
+    def hdr(name: str, default: str = "0") -> str:
+        return resp.headers.get(name, default)
+
+    now = time.time()
+
+    def reset_minutes(reset_ts: str) -> int:
+        try:
+            r = float(reset_ts)
+        except ValueError:
+            return 0
+        mins = (r - now) / 60.0
+        return int(round(mins)) if mins > 0 else 0
+
+    def pct(util: str) -> int:
+        try:
+            return int(round(float(util) * 100))
+        except ValueError:
+            return 0
+
+    payload = {
+        "s": pct(hdr("anthropic-ratelimit-unified-5h-utilization")),
+        "sr": reset_minutes(hdr("anthropic-ratelimit-unified-5h-reset")),
+        "w": pct(hdr("anthropic-ratelimit-unified-7d-utilization")),
+        "wr": reset_minutes(hdr("anthropic-ratelimit-unified-7d-reset")),
+        "st": hdr("anthropic-ratelimit-unified-5h-status", "unknown"),
+        "ok": True,
+    }
+    return payload
 
 
 def _extract_access_token(blob: str) -> str | None:
