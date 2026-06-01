@@ -5,6 +5,9 @@ firmware/.vscode/
 # OS
 .DS_Store
 
+# WSL download metadata (NTFS alternate data streams)
+*:Zone.Identifier
+
 # Claude Code
 .claude/
 
