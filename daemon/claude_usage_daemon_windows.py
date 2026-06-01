@@ -30,12 +30,15 @@ def _extract_access_token(blob: str) -> str | None:
         data = None
     if isinstance(data, dict):
         # direct: {"accessToken": "..."}
-        if isinstance(data.get("accessToken"), str):
-            return data["accessToken"]
+        tok = data.get("accessToken")
+        if isinstance(tok, str) and tok.strip():
+            return tok
         # nested: {"claudeAiOauth": {"accessToken": "..."}}
         for v in data.values():
-            if isinstance(v, dict) and isinstance(v.get("accessToken"), str):
-                return v["accessToken"]
+            if isinstance(v, dict):
+                tok = v.get("accessToken")
+                if isinstance(tok, str) and tok.strip():
+                    return tok
     m = re.search(r'"accessToken"\s*:\s*"([^"]+)"', blob)
     if m:
         return m.group(1)
@@ -104,7 +107,7 @@ def _read_expiry() -> str:
                 expires_ms / 1000, tz=datetime.timezone.utc
             )
             return dt.strftime("%Y-%m-%d %H:%M UTC")
-        except (TypeError, ValueError, OSError, json.JSONDecodeError):
+        except (TypeError, ValueError, OSError, AttributeError, json.JSONDecodeError):
             return "expiry unknown"
     return "expiry unknown"
 
@@ -117,7 +120,7 @@ if __name__ == "__main__":
             file=sys.stderr,
         )
     token = read_token()
-    if token is None:
+    if not token:
         print(
             "No Windows token found — install Claude Code natively on Windows "
             "and run 'claude login'."
