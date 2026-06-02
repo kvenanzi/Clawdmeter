@@ -5,11 +5,13 @@
 Clawdmeter is an ESP32-S3 desk monitor that shows your Claude Code usage
 (session + weekly rate-limit utilization) on a small AMOLED display, driven by a
 host daemon that polls the Anthropic API and pushes data over BLE. This project
-adds a **native Windows host daemon** so the device stays connected on Windows
-without depending on WSL — today the only host daemons are macOS (Python) and
-Linux (bash), and a Windows user running Claude Code in WSL must pass the
-Bluetooth adapter through to WSL, which steals BLE from Windows and drops the
-Clawdmeter connection whenever WSL shuts down.
+**added a native Windows host daemon** (shipped v1.0) so the device stays
+connected on Windows without depending on WSL. The host daemon lineup is now
+macOS (Python), Linux (bash), and Windows (Python + `bleak` WinRT) — the Windows
+daemon owns the Bluetooth adapter directly, runs from a login-startup system-tray
+app, auto-reconnects through sleep/range/power-cycle drops, and survives
+`wsl --shutdown`, replacing the old fragile BT-passthrough-to-WSL approach that
+stole BLE from Windows and dropped the connection whenever WSL stopped.
 
 ## Core Value
 
@@ -31,14 +33,20 @@ thinking about it — independent of whether WSL is running.
 - ✓ Windows-local OAuth token reader (`daemon/claude_usage_daemon_windows.py`, stdlib-only) reads the token from native-Windows credential paths and prints a redacted confirmation — Validated in Phase 1: Foundation (TOKEN-01; native-Windows end-to-end run pending manual confirmation)
 - ✓ Native Windows daemon polls the Anthropic API and derives the `{s,sr,w,wr,st,ok}` session+weekly utilization payload (httpx-mocked unit tests) — Validated in Phase 2: Core Pipeline (POLL-01)
 - ✓ Native Windows daemon scans/connects over BLE (`bleak` WinRT, `address_type="random"`, `use_cached_services=False`) and writes usage JSON to the GATT RX characteristic — Validated in Phase 2: Core Pipeline (BLE-01, BLE-02); confirmed on hardware (device left waiting screen, showed percentages)
+- ✓ Daemon auto-reconnects after sleep / out-of-range / device drops with no user intervention (connect-retry wrapper + zombie-link break + split fast/slow backoff protecting the 120s SLA) — Validated in Phase 3: Resilience (BLE-03); SC#1–4 confirmed on hardware after the G-03-01 graceful-degradation fix — v1.0
+- ✓ Daemon runs as a login-startup tray app (pystray status icon + Quit + error toast, `winreg` HKCU\Run autostart via `pythonw.exe`) — Validated in Phase 4: Tray & Autostart (APP-01) — v1.0
+- ✓ Daemon is fully independent of WSL — `install-windows.ps1` bootstrap + static no-WSL-paths regression guard; SC#5 confirmed device connects/displays with WSL never launched and `wsl --shutdown` leaves the daemon undisturbed — Validated in Phase 4: Tray & Autostart (APP-02) — v1.0
 
 ### Active
 
-<!-- This project's scope. Building toward these. -->
+<!-- This project's scope. Building toward these. Empty pending the next milestone — run /gsd:new-milestone to define v1.1. -->
 
-- [ ] Daemon auto-reconnects after sleep / out-of-range / device drops, with no user intervention
-- [ ] Daemon runs as a login-startup tray app showing connection status with a quit action
-- [ ] Daemon is fully independent of WSL — works with the WSL distro stopped
+(None — all v1.0 requirements shipped and validated. v2 candidates parked below.)
+
+#### Parked for v2
+
+- PyInstaller one-file Windows executable so the daemon installs without a Python environment (PKG-01)
+- Windows Service / Scheduled Task run model for before-login operation (PKG-02)
 
 ### Out of Scope
 
@@ -52,6 +60,7 @@ thinking about it — independent of whether WSL is running.
 
 ## Context
 
+- **Shipped state (v1.0):** `daemon/claude_usage_daemon_windows.py` + `daemon/tray_windows.py`, `daemon/autostart_windows.py`, `daemon/icon_assets.py`, `install-windows.ps1`, and `daemon/README-windows.md`. ~1,061 LOC daemon/tray/autostart code, ~3,400 insertions across 16 daemon files incl. pytest suites. Stack: Python + `bleak` (WinRT) + `httpx` + `pystray` + `Pillow`. All 7 v1 requirements hardware-verified.
 - **Token source:** Claude OAuth credentials currently live only inside WSL
   (`~/.claude/.credentials.json`). The user will install Claude Code natively on
   Windows so the daemon reads a Windows-local token path directly — making the
@@ -88,11 +97,11 @@ thinking about it — independent of whether WSL is running.
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Native Windows daemon (not BT passthrough to WSL) | Passthrough steals BLE from Windows and dies on WSL shutdown | — Pending |
-| Port the Python/macOS daemon, not the bash/Linux one | `bleak` WinRT backend + cross-platform `httpx` | — Pending |
-| Login-startup tray app (not Service/Scheduled Task) | Lighter setup, visible status, survives WSL shutdown | — Pending |
-| Read native-Windows token (install Claude Code on Windows) | Avoids fragile `\\wsl$`/`wsl.exe` reaching; WSL-independent | — Pending |
-| Verify GATT characteristics are unencrypted before building | Windows auto-bonds HID; encrypted chars would force manual pairing | — Pending |
+| Native Windows daemon (not BT passthrough to WSL) | Passthrough steals BLE from Windows and dies on WSL shutdown | ✓ Good — v1.0 daemon owns BLE on Windows; SC#5 confirmed it works with WSL stopped |
+| Port the Python/macOS daemon, not the bash/Linux one | `bleak` WinRT backend + cross-platform `httpx` | ✓ Good — `poll_api`/`_extract_access_token` ported verbatim; WinRT recipe connected first try on hardware |
+| Login-startup tray app (not Service/Scheduled Task) | Lighter setup, visible status, survives WSL shutdown | ✓ Good — pystray tray + `winreg` HKCU\Run autostart shipped (APP-01); Service/Task parked for v2 |
+| Read native-Windows token (install Claude Code on Windows) | Avoids fragile `\\wsl$`/`wsl.exe` reaching; WSL-independent | ✓ Good — stdlib token reader with 3-path fallback; static no-WSL-paths guard enforces it |
+| Verify GATT characteristics are unencrypted before building | Windows auto-bonds HID; encrypted chars would force manual pairing | ✓ Good — confirmed UNENCRYPTED in Phase 1; no pairing or firmware change needed |
 
 ## Evolution
 
@@ -112,4 +121,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-01 after Phase 2 (Core Pipeline) complete — Windows daemon polls the Anthropic API and pushes usage JSON over BLE end-to-end (verified on hardware). Next: Phase 3 (Resilience) — auto-reconnect.*
+*Last updated: 2026-06-02 after v1.0 (Windows Daemon) milestone — all 4 phases shipped, 7/7 v1 requirements delivered and hardware-verified (~1,061 LOC Windows daemon + tray/autostart). The Clawdmeter now stays connected on Windows independently of WSL. Next: run /gsd:new-milestone to scope v1.1.*

@@ -1,36 +1,34 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
-status: Phase 4 shipped — pushed to main (fast-forward; push-based workflow, no PR)
-stopped_at: Phase 4 context gathered
-last_updated: "2026-06-02T18:14:26.057Z"
-last_activity: 2026-06-02
+milestone_name: Windows Daemon
+status: Awaiting next milestone
+stopped_at: v1.0 milestone complete + archived
+last_updated: "2026-06-02T21:16:10.606Z"
+last_activity: 2026-06-02 — Milestone v1.0 completed and archived
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 12
-  completed_plans: 8
-  percent: 67
+  completed_plans: 12
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-01)
+See: .planning/PROJECT.md (updated 2026-06-02)
 
 **Core value:** The Clawdmeter stays connected on Windows, all the time, without the user thinking about it — independent of whether WSL is running.
-**Current focus:** Phase 04 — tray-autostart
+**Current focus:** Planning next milestone (v1.0 shipped — run /gsd-new-milestone)
 
 ## Current Position
 
-Phase: 04 (tray-autostart) — EXECUTING
-Plan: 1 of 4
-Status: Phase 4 shipped — pushed to main (fast-forward; push-based workflow, no PR)
-Last activity: 2026-06-02
-
-Progress: [██████████] 100%
+Phase: Milestone v1.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-02 — Milestone v1.0 completed and archived
 
 ## Performance Metrics
 
@@ -78,14 +76,14 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-2 pending todos in `.planning/todos/pending/`:
+0 pending todos. Both v1.0 todos resolved and moved to `.planning/todos/completed/`:
 
-- `verify-gatt-characteristics-unencrypted.md` — de-risk gate for Phase 1 (HIGH priority)
-- `implement-windows-daemon-tray.md` — tray implementation reference for Phase 4
+- `verify-gatt-characteristics-unencrypted.md` — done in Phase 1 (GATT confirmed unencrypted)
+- `implement-windows-daemon-tray.md` — done in Phase 4 (pystray tray + autostart shipped)
 
 ### Blockers/Concerns
 
-- Phase 1: GATT encryption status unknown. If characteristics require bonding, Phase 2 BLE connection approach must include a one-time Windows pairing step. Resolved by Phase 1 gate-check.
+- None open. (Phase 1 gate-check resolved the GATT-encryption concern: characteristics are unencrypted, no pairing needed.)
 
 ## Deferred Items
 
@@ -96,6 +94,10 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-02T02:50:33.715Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-tray-autostart/04-CONTEXT.md
+Last session: 2026-06-02 — v1.0 milestone completed and archived
+Stopped at: v1.0 milestone complete
+Resume file: — (no in-flight phase; start v1.1 with /gsd-new-milestone)
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone
