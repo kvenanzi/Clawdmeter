@@ -105,9 +105,9 @@ Result: PASS
 
 **Expected:** Tray remains Connected (green). No error logged. Device screen continues to show usage data. The BLE link is unaffected by WSL shutdown.
 
-Observed:
+Observed: Ran `wsl --shutdown` while the daemon was connected; the tray stayed Connected, no error logged, and the device continued showing usage data. The BLE link was unaffected. (2026-06-02)
 
-Result: PASS/FAIL
+Result: PASS
 
 ---
 
