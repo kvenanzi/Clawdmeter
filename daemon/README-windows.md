@@ -118,7 +118,19 @@ Press **Ctrl+C** in the terminal. The daemon logs `Daemon stopping` and exits cl
 
 ### One-command install (recommended)
 
-Run this once from the repository root in PowerShell:
+> **Copy the repo to a native Windows path first.** Clone or copy this repository
+> to a Windows location such as `%USERPROFILE%\Clawdmeter` — **not** a WSL share
+> (`\\wsl$\...` or `\\wsl.localhost\...`). Installing from the WSL share would point
+> the virtual environment and the login-autostart entry at a path that disappears when
+> WSL shuts down, defeating the whole point of the Windows daemon. The installer
+> detects a WSL path and refuses to run, telling you how to relocate.
+>
+> ```powershell
+> Copy-Item -Recurse '\\wsl.localhost\Ubuntu\home\<you>\repos\Clawdmeter' "$env:USERPROFILE\Clawdmeter"
+> cd "$env:USERPROFILE\Clawdmeter"
+> ```
+
+Run this once from the repository root in PowerShell (a native Windows path):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install-windows.ps1

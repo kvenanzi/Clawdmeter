@@ -1,8 +1,8 @@
-# install-windows.ps1 — Clawdmeter Windows turnkey bootstrap (D-09)
+# install-windows.ps1 - Clawdmeter Windows turnkey bootstrap (D-09)
 #
 # Creates a Python virtual environment, installs dependencies from
 # daemon\requirements-windows.txt, registers the tray app to launch at login
-# (HKCU\…\Run, no admin required), and starts the tray app immediately.
+# (HKCU\...\Run, no admin required), and starts the tray app immediately.
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File install-windows.ps1
@@ -34,11 +34,36 @@ Log "=== Clawdmeter Windows Install ==="
 Log "Repository root: $RepoRoot"
 
 # ------------------------------------------------------------------
+# Guard: refuse to install from a WSL path (APP-02 / SC#4 / SC#5)
+# ------------------------------------------------------------------
+# If $RepoRoot lives on the WSL share (\\wsl$\... or \\wsl.localhost\...),
+# the venv and the HKCU\Run autostart entry would both point at a path that
+# disappears when WSL is shut down -- exactly the WSL-dependence this project
+# exists to eliminate. Copy the repo to a native Windows path first.
+if ($RepoRoot -match '\\\\wsl(\$|\.localhost)\\') {
+    throw @"
+Refusing to install from a WSL path:
+  $RepoRoot
+
+The Clawdmeter daemon must be WSL-independent. Installing from the WSL share
+would make the virtual environment and login-autostart entry point at a path
+that is unreachable once WSL shuts down.
+
+Fix: copy this repository to a native Windows location and run the installer
+there, e.g.
+
+  Copy-Item -Recurse '$RepoRoot' "$env:USERPROFILE\Clawdmeter"
+  cd "$env:USERPROFILE\Clawdmeter"
+  powershell -ExecutionPolicy Bypass -File install-windows.ps1
+"@
+}
+
+# ------------------------------------------------------------------
 # Step 1: Create virtual environment
 # ------------------------------------------------------------------
 $VenvDir = Join-Path $RepoRoot ".venv"
 if (Test-Path $VenvDir) {
-    Log "Virtual environment already exists at .venv — skipping creation"
+    Log "Virtual environment already exists at .venv - skipping creation"
 } else {
     Log "Creating virtual environment at .venv ..."
     & python -m venv $VenvDir
@@ -61,7 +86,7 @@ Log "Dependencies installed"
 # ------------------------------------------------------------------
 # Step 3: Register autostart (HKCU\Run, per-user, no admin needed)
 # ------------------------------------------------------------------
-# Derive all paths at install time — never hard-code an absolute path that
+# Derive all paths at install time - never hard-code an absolute path that
 # breaks when the repository is moved (CLAUDE.md "repoint ExecStart" lesson,
 # RESEARCH Anti-Pattern).
 $TrayScript = Join-Path $RepoRoot "daemon\tray_windows.py"
@@ -76,10 +101,10 @@ import daemon.autostart_windows as a
 a.enable(tray_script=r'$TrayScript')
 "@
 if ($LASTEXITCODE -ne 0) { throw "Autostart registration failed (exit $LASTEXITCODE)" }
-Log "Autostart registered — Clawdmeter will launch automatically at next logon"
+Log "Autostart registered - Clawdmeter will launch automatically at next logon"
 
 # ------------------------------------------------------------------
-# Step 4: Launch the tray app (headless — pythonw.exe, no console window)
+# Step 4: Launch the tray app (headless - pythonw.exe, no console window)
 # ------------------------------------------------------------------
 Log "Launching tray app ..."
 $StartArgs = @{
@@ -88,5 +113,5 @@ $StartArgs = @{
     WorkingDirectory = $RepoRoot
 }
 Start-Process @StartArgs
-Log "Tray app started — look for the Clawdmeter icon in your notification area"
+Log "Tray app started - look for the Clawdmeter icon in your notification area"
 Log "=== Install complete ==="
