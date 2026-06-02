@@ -116,9 +116,15 @@ class Session:
         self.refresh_requested.set()
 
     async def setup_refresh_subscription(self) -> None:
+        # The refresh subscription is optional — the 60s poll loop works without it.
+        # WinRT's start_notify() CCCD write can raise a raw OSError/WinError (not
+        # wrapped as BleakError) when the peer GATT server is transiently unavailable,
+        # e.g. a just-power-cycled ESP32 whose server is not yet ready (G-03-01, SC#3).
+        # Degrade gracefully instead of crashing the daemon so it stays single-process
+        # across a power-cycle reconnect (SC#4, no restart).
         try:
             await self.client.start_notify(REQ_CHAR_UUID, self._on_refresh)
-        except (BleakError, ValueError) as e:
+        except (BleakError, ValueError, OSError) as e:
             log(f"Refresh subscription unavailable: {e}")
 
     async def write_payload(self, payload: dict) -> bool:
