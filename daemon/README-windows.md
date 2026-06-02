@@ -1,8 +1,8 @@
 # Windows Setup and Run Guide
 
-This guide covers running the Windows BLE daemon (`claude_usage_daemon_windows.py`) on native
-Windows hardware. It is scoped to Phase 2: manual run from a PowerShell terminal, no tray icon,
-no autostart, and no packaged executable (those come in a later phase).
+This guide covers running the Clawdmeter Windows daemon on native Windows hardware.
+It includes the turnkey `install-windows.ps1` bootstrap (tray icon + login autostart),
+the manual-run fallback, and how to manage or remove autostart.
 
 ---
 
@@ -114,8 +114,67 @@ Press **Ctrl+C** in the terminal. The daemon logs `Daemon stopping` and exits cl
 
 ---
 
+## Tray icon, login autostart, and turnkey install
+
+### One-command install (recommended)
+
+Run this once from the repository root in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install-windows.ps1
+```
+
+The script does four things in order and logs progress at each step:
+
+1. Creates a Python virtual environment at `.venv`.
+2. Installs dependencies from `daemon\requirements-windows.txt` (bleak, httpx, pystray, Pillow).
+3. Registers the tray app to launch automatically at login via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — per-user, no admin required.
+4. Launches the tray app immediately (headless — no console window).
+
+The script downloads nothing from the internet. It only installs the packages listed in
+the in-repo `daemon\requirements-windows.txt`.
+
+### Tray icon and status
+
+After install, the Clawdmeter icon appears in the Windows notification area:
+
+| State | Icon bubble | Tooltip |
+|-------|-------------|---------|
+| Connected | green | `Connected · last update HH:MM` |
+| Scanning | amber | `Scanning…` |
+| Error | red | `Error: token expired — run claude login` |
+
+Hover over the icon to see the current status tooltip. A notification fires once when the
+daemon first enters the Error state (e.g. after a token expiry).
+
+### Tray menu
+
+Right-click the tray icon for the menu:
+
+- **Status header** (non-clickable) — live status + last data sync time.
+- **Start at login** (checkable toggle) — enables or disables autostart at runtime.
+  Reflects the current registry state each time the menu opens.
+- **Quit** — disconnects the BLE link cleanly and exits. No lingering process.
+
+### Disabling or removing autostart
+
+Use the tray menu toggle, or remove the registry value manually:
+
+```powershell
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Clawdmeter /f
+```
+
+### WSL independence
+
+The daemon operates fully independently of WSL. The token is read from native Windows
+credential paths (`%USERPROFILE%\.claude\.credentials.json` and fallbacks); BLE uses
+the WinRT stack directly. Running `wsl --shutdown` does not affect the BLE link, and
+the daemon starts correctly even in a fresh Windows session where WSL has never been
+launched.
+
+---
+
 ## What is NOT covered here
 
-- Tray icon, login autostart, `install-windows.ps1` script — Phase 4
 - PyInstaller / one-file `.exe` packaging — v2
 - MAC-address cache / sleep-wake reconnect hardening — Phase 3
