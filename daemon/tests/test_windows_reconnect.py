@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from bleak.exc import BleakError
 
-from daemon.claude_usage_daemon_windows import connect_and_run
+from daemon.claude_usage_daemon_windows import Session, _wait_first, connect_and_run
 
 
 # ---------------------------------------------------------------------------
@@ -600,3 +600,63 @@ def test_start_notify_oserror_does_not_crash_connect_and_run():
     assert result is False
     # The link was cleaned up via the finally block.
     assert mock_client.disconnect.call_count >= 1
+
+
+# ---------------------------------------------------------------------------
+# SC#2 field report: write_payload() OSError must not crash the daemon thread
+# ---------------------------------------------------------------------------
+
+def test_write_payload_oserror_returns_false_not_raises():
+    """SC#2 regression: write_gatt_char can raise a raw OSError/WinError (NOT a
+    BleakError) when the peer GATT server goes transiently unavailable mid-write.
+    write_payload must catch it and return False — tripping the zombie-link break
+    for a clean reconnect — instead of propagating an uncaught exception that
+    silently kills the daemon=True background thread and freezes the tray.
+    """
+    mock_client = AsyncMock()
+    mock_client.write_gatt_char = AsyncMock(
+        side_effect=OSError(-2147023673, "The operation was canceled by the user.")
+    )
+    session = Session(mock_client)
+
+    result = _run(session.write_payload({"ok": True}))
+
+    assert result is False  # caught and reported, not raised
+    assert mock_client.write_gatt_char.call_count == 1
+
+
+def test_write_payload_bleak_error_still_returns_false():
+    """The pre-existing BleakError path must keep returning False (no regression
+    from widening the except to also cover OSError)."""
+    mock_client = AsyncMock()
+    mock_client.write_gatt_char = AsyncMock(side_effect=BleakError("disconnected"))
+    session = Session(mock_client)
+
+    assert _run(session.write_payload({"ok": True})) is False
+
+
+# ---------------------------------------------------------------------------
+# SC#3 graceful Quit: _wait_first wakes immediately on stop (clean disconnect)
+# ---------------------------------------------------------------------------
+
+def test_wait_first_returns_immediately_when_an_event_is_set():
+    """The poll loop's TICK wait must break the instant stop_event is set, so the
+    finally: client.disconnect() runs before the process exits (SC#3). The outer
+    wait_for(2s) fails fast if _wait_first wrongly blocks for the full 30s timeout."""
+    async def go():
+        refresh = asyncio.Event()
+        stop = asyncio.Event()
+        stop.set()  # stop signalled
+        await asyncio.wait_for(_wait_first(refresh, stop, timeout=30.0), timeout=2.0)
+        assert not refresh.is_set()  # loser waiter drained, refresh untouched
+    _run(go())
+
+
+def test_wait_first_returns_after_timeout_when_no_event_set():
+    """With neither event set, _wait_first returns after `timeout` (the normal
+    poll-tick path) rather than hanging."""
+    async def go():
+        await asyncio.wait_for(
+            _wait_first(asyncio.Event(), asyncio.Event(), timeout=0.05), timeout=2.0
+        )
+    _run(go())

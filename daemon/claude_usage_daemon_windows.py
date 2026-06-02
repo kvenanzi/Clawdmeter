@@ -9,6 +9,8 @@ later plans.
 import asyncio
 import datetime
 import json
+import logging
+import logging.handlers
 import os
 import re
 import signal
@@ -51,8 +53,49 @@ API_BODY = {
 }
 
 
+def _build_file_logger() -> logging.Logger | None:
+    """Create a rotating file logger for field diagnostics, or None.
+
+    Autostart launches the tray under pythonw.exe, which has no console — stdout
+    is discarded (and is in fact None, making print() unsafe). A rotating file is
+    then the ONLY trail when the daemon stalls in the field. Windows-only: on the
+    Linux dev box / CI the console print() suffices, and gating to win32 keeps the
+    pure-helper unit tests from writing stray log files.
+    """
+    if sys.platform != "win32":
+        return None
+    logger = logging.getLogger("clawdmeter.daemon")
+    if logger.handlers:
+        return logger  # idempotent across re-import (tray imports this module)
+    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    path = base / "Clawdmeter" / "daemon.log"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(
+            path, maxBytes=512 * 1024, backupCount=3, encoding="utf-8"
+        )
+    except OSError:
+        return None  # best-effort — logging setup must never stop the daemon
+    handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    return logger
+
+
+_FILE_LOGGER = _build_file_logger()
+
+
 def log(msg: str) -> None:
-    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    line = f"[{time.strftime('%H:%M:%S')}] {msg}"
+    # Under pythonw sys.stdout is None and print() would raise — guard it so a
+    # missing console can never crash the daemon thread (the silent-freeze mode).
+    try:
+        print(line, flush=True)
+    except (OSError, ValueError, AttributeError, RuntimeError):
+        pass
+    if _FILE_LOGGER is not None:
+        _FILE_LOGGER.info(msg)
 
 
 async def poll_api(token: str) -> dict | None:
@@ -134,7 +177,13 @@ class Session:
         try:
             await self.client.write_gatt_char(RX_CHAR_UUID, data, response=False)
             return True
-        except BleakError as e:
+        except (BleakError, OSError) as e:
+            # WinRT can raise a raw OSError/WinError (NOT wrapped as BleakError)
+            # when the peer GATT server goes transiently unavailable mid-write —
+            # the same failure class setup_refresh_subscription() guards against.
+            # Returning False trips the zombie-link break -> clean reconnect,
+            # rather than an uncaught exception killing the daemon thread (the
+            # silent-freeze failure mode, SC#2 field report).
             log(f"Write failed: {e}")
             return False
 
@@ -238,6 +287,23 @@ def _read_expiry() -> str:
     return "expiry unknown"
 
 
+async def _wait_first(*events: asyncio.Event, timeout: float) -> None:
+    """Return when any of `events` is set, or after `timeout` seconds.
+
+    Lets the poll loop's TICK wait wake immediately on a stop signal (clean,
+    responsive Quit) without losing the refresh-request wakeup — instead of
+    waiting only on refresh_requested and re-checking stop_event up to TICK
+    later. Cancels and drains the loser tasks so they don't warn.
+    """
+    tasks = [asyncio.ensure_future(e.wait()) for e in events]
+    try:
+        await asyncio.wait(tasks, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def connect_and_run(device, stop_event: asyncio.Event, tray_state=None) -> bool:
     """Connect to device and poll until disconnected or stopped.
 
@@ -325,14 +391,19 @@ async def connect_and_run(device, stop_event: asyncio.Event, tray_state=None) ->
                         if tray_state:
                             tray_state.set_error("token expired — run claude login")
 
-            try:
-                await asyncio.wait_for(session.refresh_requested.wait(), timeout=TICK)
-            except asyncio.TimeoutError:
-                pass
+            # Wake on a refresh request OR a stop, whichever comes first. Waking
+            # promptly on stop_event is what lets the finally below run
+            # client.disconnect() before the process exits, so the peer gets a
+            # clean GATT disconnect (returns to its waiting screen) instead of
+            # being left frozen on stale data after Quit (SC#3 graceful shutdown).
+            await _wait_first(session.refresh_requested, stop_event, timeout=TICK)
     finally:
+        # Clean GATT disconnect on the way out — this is what tells the peripheral
+        # the link is gone. WinRT can surface a raw OSError (not BleakError) here,
+        # so swallow both; the link tears down regardless once we exit.
         try:
             await client.disconnect()
-        except BleakError:
+        except (BleakError, OSError):
             pass
 
     log("Device disconnected" if not stop_event.is_set() else "Stopping")

@@ -180,7 +180,7 @@ def main() -> None:
     from pystray import Menu, MenuItem
 
     import daemon.autostart_windows as autostart
-    from daemon.claude_usage_daemon_windows import main as daemon_main
+    from daemon.claude_usage_daemon_windows import main as daemon_main, log as daemon_log
     from daemon.icon_assets import load_logo_rgba, build_state_icons
 
     # Build per-state icons once at startup; swap icon.icon per tick (never recomposite).
@@ -192,15 +192,36 @@ def main() -> None:
 
     # --- background thread: asyncio loop ---
     def _run_daemon() -> None:
-        _asyncio.run(daemon_main(tray_state=ts))
+        # daemon=True thread: an unhandled exception here would vanish silently
+        # and freeze the tray on its last state forever (the field "frozen tray"
+        # failure mode). Surface it instead — log the traceback to the rotating
+        # file and flip the tray to an actionable error state.
+        try:
+            _asyncio.run(daemon_main(tray_state=ts))
+        except Exception as e:  # last-resort thread guard
+            import traceback
+            daemon_log(f"Daemon thread crashed: {e!r}")
+            daemon_log(traceback.format_exc())
+            ts.set_error(f"daemon crashed: {type(e).__name__}")
 
-    threading.Thread(target=_run_daemon, daemon=True).start()
+    daemon_thread = threading.Thread(target=_run_daemon, daemon=True)
+    daemon_thread.start()
 
     # --- menu ---
     def _on_quit(icon_ref, _item) -> None:
         # NEVER call ts.stop_event.set() directly from the tray thread;
         # asyncio.Event is NOT thread-safe (RESEARCH Pitfall 2).
-        ts.loop.call_soon_threadsafe(ts.stop_event.set)
+        #
+        # After signalling, WAIT for the daemon thread to finish its graceful
+        # shutdown (the loop's finally: client.disconnect()) BEFORE we stop the
+        # icon and let the process exit. Without this join the daemon=True thread
+        # is killed mid-flight, the peer never gets a clean GATT disconnect, and
+        # the device sits frozen on stale data instead of returning to its waiting
+        # screen (SC#3 field report). The timeout caps the block so Quit can never
+        # hang if a WinRT disconnect wedges (rare) — we exit anyway as a fallback.
+        if ts.loop is not None and ts.stop_event is not None:
+            ts.loop.call_soon_threadsafe(ts.stop_event.set)
+            daemon_thread.join(timeout=6.0)
         icon_ref.stop()
 
     def _on_toggle(_icon_ref, _item) -> None:
@@ -222,19 +243,28 @@ def main() -> None:
     )
 
     # --- setup callback (runs in pystray's setup thread, 1s poll) ---
-    prev_state: dict = {"state": None}
+    prev_state: dict = {"state": None, "last_sync": None}
 
     def _refresh(_icon: pystray.Icon) -> None:
         _icon.visible = True
         while _icon._running:  # type: ignore[attr-defined]
             current = ts.state
-            if current != prev_state["state"]:
-                _icon.icon = images[current]
+            last_sync = ts.last_sync
+            state_changed = current != prev_state["state"]
+            # Refresh the tooltip/menu when last_sync advances too — not only on
+            # state change. A healthy "connected" daemon polling a flat usage
+            # value never changes state, so a transition-only refresh froze the
+            # "last update HH:MM" tooltip and read as a dead daemon (SC#2 field
+            # report: device + tooltip both looked stuck while polling was fine).
+            if state_changed or last_sync != prev_state["last_sync"]:
+                if state_changed:
+                    _icon.icon = images[current]  # icon image depends on state only
                 _icon.title = header_text(ts)
                 # D-04: toast ONLY on transition INTO error, not on every error tick.
                 if current == "error" and prev_state["state"] != "error":
                     _icon.notify(ts.reason or "Clawdmeter error", "Clawdmeter")
                 prev_state["state"] = current
+                prev_state["last_sync"] = last_sync
                 _icon.update_menu()
             time.sleep(1.0)
 
