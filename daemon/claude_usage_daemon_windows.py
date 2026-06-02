@@ -98,6 +98,14 @@ def log(msg: str) -> None:
         _FILE_LOGGER.info(msg)
 
 
+class AuthError(Exception):
+    """Raised by poll_api on a genuine 401/403 — the token really is expired or
+    invalid and the user must re-run `claude login`. Distinct from a None return,
+    which means a TRANSIENT failure (network/DNS, timeout, rate-limit, 5xx) that
+    must NOT be mislabeled as a token problem (SC#5: a boot-time `getaddrinfo
+    failed` DNS blip wrongly fired the 'token expired' toast)."""
+
+
 async def poll_api(token: str) -> dict | None:
     headers = dict(API_HEADERS_TEMPLATE)
     headers["Authorization"] = f"Bearer {token}"
@@ -105,9 +113,16 @@ async def poll_api(token: str) -> dict | None:
         async with httpx.AsyncClient(timeout=20.0) as http:
             resp = await http.post(API_URL, headers=headers, json=API_BODY)
     except httpx.HTTPError as e:
+        # Network/DNS/timeout — transient. Return None (no toast), retry next tick.
         log(f"API call failed: {e}")
         return None
+    if resp.status_code in (401, 403):
+        # Genuine auth rejection — the ONLY case that warrants the actionable
+        # "run claude login" toast.
+        log(f"API HTTP {resp.status_code}: {resp.text[:200]}")
+        raise AuthError(resp.status_code)
     if resp.status_code >= 400:
+        # Other 4xx/5xx (rate-limit, server error) — transient, not a token issue.
         log(f"API HTTP {resp.status_code}: {resp.text[:200]}")
         return None
 
@@ -370,7 +385,13 @@ async def connect_and_run(device, stop_event: asyncio.Event, tray_state=None) ->
                     if tray_state:
                         tray_state.set_error("token expired — run claude login")
                 else:
-                    payload = await poll_api(token)
+                    try:
+                        payload = await poll_api(token)
+                    except AuthError:
+                        # Real 401/403 — token genuinely needs a refresh.
+                        if tray_state:
+                            tray_state.set_error("token expired — run claude login")
+                        payload = None
                     if payload is not None:
                         if await session.write_payload(payload):
                             last_poll = time.time()
@@ -386,10 +407,11 @@ async def connect_and_run(device, stop_event: asyncio.Event, tray_state=None) ->
                                     f" write failures); abandoning connection"
                                 )
                                 break
-                    else:
-                        # poll_api returned None — HTTP 400+/auth failure (D-01 Error)
-                        if tray_state:
-                            tray_state.set_error("token expired — run claude login")
+                    # else: payload is None from a TRANSIENT failure (network/DNS,
+                    # timeout, rate-limit, 5xx). poll_api already logged it; do NOT
+                    # toast "token expired" — that mislabeled a boot-time DNS blip
+                    # as an auth problem (SC#5). Leave tray state unchanged; the next
+                    # tick retries and set_connected() recovers it.
 
             # Wake on a refresh request OR a stop, whichever comes first. Waking
             # promptly on stop_event is what lets the finally below run

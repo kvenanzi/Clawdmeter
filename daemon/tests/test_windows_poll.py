@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from daemon.claude_usage_daemon_windows import poll_api
+from daemon.claude_usage_daemon_windows import AuthError, poll_api
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +316,41 @@ def test_poll_api_returns_none_on_4xx(monkeypatch):
 def test_poll_api_returns_none_on_5xx(monkeypatch):
     """poll_api returns None when response status code is >= 500."""
     mock_resp = _make_mock_response(status_code=500, headers={})
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = _run(poll_api("fake-token"))
+
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Test: poll_api raises AuthError ONLY on a genuine 401/403 (SC#5 fix)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_poll_api_raises_autherror_on_401_403(status):
+    """A real auth rejection must raise AuthError — the only signal that warrants
+    the actionable 'token expired — run claude login' toast. Transient failures
+    (5xx, 429, network) return None instead and must NOT trigger that toast."""
+    mock_resp = _make_mock_response(status_code=status, headers={})
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        with pytest.raises(AuthError):
+            _run(poll_api("fake-token"))
+
+
+def test_poll_api_returns_none_not_autherror_on_429(monkeypatch):
+    """Rate-limit (429) is transient — None, NOT AuthError (regression guard for
+    the 401/403-vs-other-4xx split)."""
+    mock_resp = _make_mock_response(status_code=429, headers={})
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)

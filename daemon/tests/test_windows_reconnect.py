@@ -14,7 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from bleak.exc import BleakError
 
-from daemon.claude_usage_daemon_windows import Session, _wait_first, connect_and_run
+from daemon.claude_usage_daemon_windows import (
+    AuthError,
+    Session,
+    _wait_first,
+    connect_and_run,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -660,3 +665,59 @@ def test_wait_first_returns_after_timeout_when_no_event_set():
             _wait_first(asyncio.Event(), asyncio.Event(), timeout=0.05), timeout=2.0
         )
     _run(go())
+
+
+# ---------------------------------------------------------------------------
+# SC#5: transient poll failure must NOT toast "token expired"; only a real
+# 401/403 (AuthError) should. A boot-time DNS blip returns None, not AuthError.
+# ---------------------------------------------------------------------------
+
+def _connected_mock_client():
+    client = AsyncMock()
+    client.connect = AsyncMock(return_value=None)
+    client.is_connected = True
+    client.disconnect = AsyncMock()
+    client.start_notify = AsyncMock()
+    return client
+
+
+def test_transient_poll_failure_does_not_set_error():
+    """poll_api returning None (network/DNS, timeout, 5xx, 429) is transient and
+    must leave the tray state untouched — not flip it to 'token expired' (SC#5
+    field report: `getaddrinfo failed` at boot wrongly fired the toast)."""
+    device = _make_device()
+    stop_event = asyncio.run(_make_event(False))
+    tray_state = MagicMock()
+    client = _connected_mock_client()
+
+    async def fake_poll(_token):
+        stop_event.set()  # end the loop after this single transient failure
+        return None
+
+    with patch("daemon.claude_usage_daemon_windows.BleakClient", return_value=client), \
+         patch("daemon.claude_usage_daemon_windows.read_token", return_value="tok"), \
+         patch("daemon.claude_usage_daemon_windows.poll_api", new=fake_poll):
+        _run(connect_and_run(device, stop_event, tray_state))
+
+    tray_state.set_error.assert_not_called()
+    tray_state.set_connected.assert_not_called()
+
+
+def test_auth_error_sets_token_expired():
+    """A genuine 401/403 surfaces as AuthError and DOES flip the tray to the
+    actionable 'token expired — run claude login' error state."""
+    device = _make_device()
+    stop_event = asyncio.run(_make_event(False))
+    tray_state = MagicMock()
+    client = _connected_mock_client()
+
+    async def fake_poll(_token):
+        stop_event.set()
+        raise AuthError(401)
+
+    with patch("daemon.claude_usage_daemon_windows.BleakClient", return_value=client), \
+         patch("daemon.claude_usage_daemon_windows.read_token", return_value="tok"), \
+         patch("daemon.claude_usage_daemon_windows.poll_api", new=fake_poll):
+        _run(connect_and_run(device, stop_event, tray_state))
+
+    tray_state.set_error.assert_called_once_with("token expired — run claude login")

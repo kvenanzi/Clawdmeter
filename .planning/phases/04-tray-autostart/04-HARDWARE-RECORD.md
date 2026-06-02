@@ -125,9 +125,25 @@ Result: PASS
 
 **Expected:** Daemon starts without WSL. Device connects and shows usage data within ~60 seconds. WSL never needs to be launched for the daemon to function.
 
-Observed:
+Observed: After a full reboot (WSL never launched), the tray started automatically and the
+device connected and showed usage. A "token expired" notification popped up briefly at boot,
+then the app connected properly anyway. WSL was never needed. (2026-06-02)
 
-Result: PASS/FAIL
+> **Follow-up (transient boot-time toast):** The "token expired" toast self-cleared without
+> any re-login. Since the daemon does not refresh tokens (only Claude Code does) and Claude
+> Code was never opened, a genuine expiry could not have recovered on its own — the first
+> poll almost certainly failed transiently (network not up immediately post-login). Root
+> cause is a misattributed error string: `poll_api()` returned `None` on ANY failure (network,
+> timeout, 5xx, or a real 401) and the caller labeled all of them "token expired — run claude
+> login".
+>
+> **Fixed:** `daemon.log` confirmed the trigger — `API call failed: [Errno 11001] getaddrinfo
+> failed` (DNS not up yet at login), recovered on the next tick 6s later. `poll_api` now raises
+> `AuthError` only on a genuine 401/403; transient failures (network/DNS, timeout, 429, 5xx)
+> return `None` and no longer toast. Verified by unit tests (`test_poll_api_raises_autherror_on_401_403`,
+> `test_transient_poll_failure_does_not_set_error`).
+
+Result: PASS
 
 ---
 
