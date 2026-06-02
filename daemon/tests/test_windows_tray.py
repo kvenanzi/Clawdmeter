@@ -209,3 +209,30 @@ def test_error_toast_on_entry_only():
     mock_icon.notify.assert_called_once_with(
         "token expired — run claude login", "Clawdmeter"
     )
+
+
+# ---------------------------------------------------------------------------
+# Regression: cwd-independent package + asset resolution (SC#1 logon autostart)
+# ---------------------------------------------------------------------------
+# Field bug: launching `pythonw.exe daemon\tray_windows.py` at logon starts with
+# cwd = System32, so `import daemon.*` raised ModuleNotFoundError and the relative
+# logo path failed — the tray crashed silently with no icon. tray_windows must
+# self-locate the repo root from __file__ so it works from any working directory.
+
+def test_repo_root_is_parent_of_daemon_package():
+    """_REPO_ROOT points at the dir that CONTAINS the daemon package."""
+    import os
+    import daemon.tray_windows as tw
+
+    assert os.path.isdir(os.path.join(tw._REPO_ROOT, "daemon"))
+    assert os.path.isfile(
+        os.path.join(tw._REPO_ROOT, "firmware", "src", "logo.h")
+    ), "brand logo must resolve from _REPO_ROOT, not the current working directory"
+
+
+def test_repo_root_on_sys_path_after_import():
+    """Importing tray_windows puts the repo root on sys.path so `daemon.*` resolves regardless of cwd."""
+    import sys
+    import daemon.tray_windows as tw
+
+    assert tw._REPO_ROOT in sys.path

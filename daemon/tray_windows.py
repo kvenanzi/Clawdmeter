@@ -17,8 +17,19 @@ Usage::
 Run: python -m pytest daemon/tests/test_windows_tray.py -x -q
 """
 
+import os
+import sys
 import threading
 import time
+
+# Repo root = the directory that CONTAINS the `daemon` package (this file is
+# <repo>/daemon/tray_windows.py). Resolve it from __file__ so the package
+# imports below and the brand-logo asset load work no matter what the current
+# working directory is — critical for logon autostart, where the HKCU\Run entry
+# starts with cwd = System32, not the repo (APP-01 / SC#1).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 # ---------------------------------------------------------------------------
 # TrayState — thread-safe scalar bridge (loop -> tray)
@@ -106,7 +117,7 @@ def main() -> None:
     from daemon.icon_assets import load_logo_rgba, build_state_icons
 
     # Build per-state icons once at startup; swap icon.icon per tick (never recomposite).
-    base = load_logo_rgba("firmware/src/logo.h")
+    base = load_logo_rgba(os.path.join(_REPO_ROOT, "firmware", "src", "logo.h"))
     images = build_state_icons(base)
 
     ts = TrayState()
