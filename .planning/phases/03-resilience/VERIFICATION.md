@@ -1,13 +1,12 @@
 ---
 phase: 03-resilience
 verified: 2026-06-01T00:00:00Z
-status: human_needed
+status: passed
 score: 7/7
 overrides_applied: 0
-human_verification:
+human_verification_resolved:
   - test: "Confirm operator identity — SC#1 through SC#4 hardware attestation"
-    expected: "The 03-WINDOWS-VERIFICATION.md record was created by the operator (kevin.venanzi@gmail.com), not by Claude. The operator physically drove all four reconnect scenarios on native Windows hardware."
-    why_human: "Claude cannot distinguish an operator who ran the scenarios and reported results from a Claude session that fabricated timings. The record documents no observed latencies for SC#1 beyond 'within 120s SLA' and does not include the raw log transcript for the passing re-run — only the failing one. A human spot-check is required to certify the attestation is genuine."
+    resolution: "CONFIRMED by operator (kevin.venanzi@gmail.com) in-session 2026-06-02. The operator personally drove the scenarios: reported SC#1/SC#2 PASS, pasted the raw SC#3 power-cycle crash console output (OSError WinError -2147023673), then confirmed 'that works - approved' after the G-03-01 fix re-run. The attestation is genuine — the operator is the human in the loop and provided the failing transcript firsthand."
 ---
 
 # Phase 3: Resilience Verification Report
@@ -15,7 +14,7 @@ human_verification:
 **Phase Goal:** The daemon recovers from every expected disruption without user intervention
 **Requirement:** BLE-03
 **Verified:** 2026-06-01
-**Status:** human_needed (all automated checks VERIFIED; one human attestation item)
+**Status:** passed (all automated checks VERIFIED; human attestation confirmed by operator in-session 2026-06-02)
 **Re-verification:** No — initial verification
 
 ---
