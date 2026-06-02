@@ -65,7 +65,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The daemon never requires a restart to recover from any of the above scenarios
 **Plans**: 3 plans
   - [x] 03-01-PLAN.md — TDD: connect-retry wrapper (D-01) + zombie-link consecutive-failure break (D-03) in connect_and_run
-  - [ ] 03-02-PLAN.md — TDD: split fast-reconnect vs slow-search backoff (D-05) in main()
+  - [x] 03-02-PLAN.md — TDD: split fast-reconnect vs slow-search backoff (D-05) in main()
   - [ ] 03-03-PLAN.md — Manual on-hardware reconnect record for SC#1-4 (D-06 hardware half)
 
 ### Phase 4: Tray & Autostart
@@ -91,5 +91,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Foundation | 2/2 | Complete   | 2026-06-01 |
 | 2. Core Pipeline | 3/3 | Complete   | 2026-06-01 |
-| 3. Resilience | 1/3 | In Progress|  |
+| 3. Resilience | 2/3 | In Progress|  |
 | 4. Tray & Autostart | 0/TBD | Not started | - |
