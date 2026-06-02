@@ -30,6 +30,9 @@ TICK = 5
 SCAN_TIMEOUT = 8.0
 CONNECT_RETRIES = 3        # D-01: attempts before giving up on a device
 CONNECT_RETRY_DELAY = 2.0  # D-01: seconds between failed connect attempts
+ZOMBIE_BREAK_LIMIT = 1     # D-03: consecutive write failures before abandoning a half-open link
+                           # N=1: breaks at T=60s, leaves ~60s headroom for reconnect+poll inside 120s SLA
+                           # N=2 would bust the 120s budget before reconnect even begins
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_HEADERS_TEMPLATE = {
@@ -279,6 +282,7 @@ async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
 
     last_poll = 0.0  # D-03: poll immediately on first connect
     used_successfully = False
+    consecutive_failures = 0  # D-03: zombie-link break counter
     try:
         while client.is_connected and not stop_event.is_set():
             now = time.time()
@@ -294,6 +298,15 @@ async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
                         if await session.write_payload(payload):
                             last_poll = time.time()
                             used_successfully = True
+                            consecutive_failures = 0  # D-03: reset on success
+                        else:
+                            consecutive_failures += 1
+                            if consecutive_failures >= ZOMBIE_BREAK_LIMIT:
+                                log(
+                                    f"Zombie link detected ({consecutive_failures} consecutive"
+                                    f" write failures); abandoning connection"
+                                )
+                                break
 
             try:
                 await asyncio.wait_for(session.refresh_requested.wait(), timeout=TICK)
