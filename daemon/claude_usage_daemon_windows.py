@@ -237,7 +237,7 @@ def _read_expiry() -> str:
     return "expiry unknown"
 
 
-async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
+async def connect_and_run(device, stop_event: asyncio.Event, tray_state=None) -> bool:
     """Connect to device and poll until disconnected or stopped.
 
     Returns True if at least one successful write occurred.
@@ -300,6 +300,8 @@ async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
                 token = read_token()  # D-09: fresh each cycle
                 if not token:
                     log("No token; skipping poll")
+                    if tray_state:
+                        tray_state.set_error("token expired — run claude login")
                 else:
                     payload = await poll_api(token)
                     if payload is not None:
@@ -307,6 +309,8 @@ async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
                             last_poll = time.time()
                             used_successfully = True
                             consecutive_failures = 0  # D-03: reset on success
+                            if tray_state:
+                                tray_state.set_connected(time.time())
                         else:
                             consecutive_failures += 1
                             if consecutive_failures >= ZOMBIE_BREAK_LIMIT:
@@ -315,6 +319,10 @@ async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
                                     f" write failures); abandoning connection"
                                 )
                                 break
+                    else:
+                        # poll_api returned None — HTTP 400+/auth failure (D-01 Error)
+                        if tray_state:
+                            tray_state.set_error("token expired — run claude login")
 
             try:
                 await asyncio.wait_for(session.refresh_requested.wait(), timeout=TICK)
@@ -339,9 +347,16 @@ def _next_backoff(current: int, cap: int) -> int:
     return min(current * 2, cap)
 
 
-async def main() -> None:
+async def main(tray_state=None) -> None:
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
+
+    # Populate the shared state object so the tray can route Quit through
+    # loop.call_soon_threadsafe (RESEARCH Pitfall 2).  Additive — the existing
+    # stop_event = asyncio.Event() line above is unchanged.
+    if tray_state is not None:
+        tray_state.loop = loop
+        tray_state.stop_event = stop_event
 
     def _stop(*_args: object) -> None:
         log("Daemon stopping")
@@ -364,6 +379,8 @@ async def main() -> None:
         device = await scan_for_device()
         if not device:
             # Slow-search regime: device was not found by scan — back off gently
+            if tray_state:
+                tray_state.set_scanning()
             log(f"Device not found, retrying in {search_backoff}s...")
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=search_backoff)
@@ -372,9 +389,11 @@ async def main() -> None:
             search_backoff = _next_backoff(search_backoff, 60)
             continue
 
-        ok = await connect_and_run(device, stop_event)
+        ok = await connect_and_run(device, stop_event, tray_state)
         if not ok:
             # Fast-reconnect regime: had/attempted a link that dropped — retry quickly
+            if tray_state:
+                tray_state.set_scanning()
             log(f"Connection lost, reconnecting in {reconnect_backoff}s...")
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=reconnect_backoff)

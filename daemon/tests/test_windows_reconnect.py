@@ -23,7 +23,7 @@ from daemon.claude_usage_daemon_windows import connect_and_run
 
 def _run(coro):
     """Run a coroutine synchronously for synchronous test functions."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _make_device(address="AA:BB:CC:DD:EE:FF"):
@@ -49,7 +49,7 @@ def test_connect_retry_exhaustion_on_bleak_error(monkeypatch, capsys):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
 
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock(side_effect=BleakError("Unreachable"))
@@ -69,7 +69,7 @@ def test_connect_retry_exhaustion_on_timeout_error(monkeypatch, capsys):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
 
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock(side_effect=asyncio.TimeoutError())
@@ -89,7 +89,7 @@ def test_connect_retry_calls_disconnect_between_attempts(monkeypatch):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
 
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock(side_effect=BleakError("Unreachable"))
@@ -110,7 +110,7 @@ def test_connect_success_on_first_attempt_no_extra_retries(monkeypatch):
 
     device = _make_device()
     # stop_event is set so the loop exits immediately after connecting
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(True))
+    stop_event = asyncio.run(_make_event(True))
 
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock(return_value=None)  # success
@@ -133,7 +133,7 @@ def test_connect_retry_exhaustion_does_not_log_token(monkeypatch, capsys):
 
     TOKEN_SENTINEL = "sk-ant-SUPERSECRET-DO-NOT-LOG-12345"
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
 
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock(side_effect=BleakError("Unreachable"))
@@ -169,7 +169,7 @@ def test_zombie_link_break_after_limit_consecutive_failures(monkeypatch):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
     mock_client = _make_zombie_client()
 
     write_call_count = [0]
@@ -211,7 +211,7 @@ def test_zombie_counter_resets_on_success_with_raised_limit(monkeypatch):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
     mock_client = _make_zombie_client()
 
     # Sequence: False (counter=1), True (counter reset to 0), False (counter=1 again), break
@@ -277,7 +277,7 @@ def test_zombie_break_disconnect_called_in_finally(monkeypatch):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
     mock_client = _make_zombie_client()
 
     async def fake_write_payload(payload):
@@ -313,7 +313,7 @@ def test_zombie_break_returns_used_successfully_false(monkeypatch):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
     mock_client = _make_zombie_client()
 
     async def fake_write_payload(payload):
@@ -457,7 +457,7 @@ def test_main_connect_fail_uses_reconnect_backoff():
     async def fake_scan():
         return fake_device  # always finds device
 
-    async def fake_connect_and_run(device, event):
+    async def fake_connect_and_run(device, event, tray_state=None):
         return False  # always fails -> fast-reconnect regime
 
     async def fake_wait_for(coro, timeout):
@@ -505,7 +505,7 @@ def test_main_reconnect_backoff_reset_on_success():
     async def fake_scan():
         return fake_device
 
-    async def fake_connect_and_run(device, event):
+    async def fake_connect_and_run(device, event, tray_state=None):
         idx = connect_idx[0]
         connect_idx[0] += 1
         if idx < len(connect_results):
@@ -571,7 +571,7 @@ def test_start_notify_oserror_does_not_crash_connect_and_run():
     """
     device = _make_device()
     # stop_event set so the poll loop exits immediately after subscription setup
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(True))
+    stop_event = asyncio.run(_make_event(True))
 
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock(return_value=None)  # connect succeeds
