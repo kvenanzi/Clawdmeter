@@ -28,6 +28,8 @@ REQ_CHAR_UUID = "4c41555a-4465-7669-6365-000000000004"
 POLL_INTERVAL = 60
 TICK = 5
 SCAN_TIMEOUT = 8.0
+CONNECT_RETRIES = 3        # D-01: attempts before giving up on a device
+CONNECT_RETRY_DELAY = 2.0  # D-01: seconds between failed connect attempts
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_HEADERS_TEMPLATE = {
@@ -230,22 +232,45 @@ async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
     Returns True if at least one successful write occurred.
     """
     log(f"Connecting to {device.address}...")
-    # D-05: pass BLEDevice (not address string), address_type="random" (NimBLE
-    # static-random), use_cached_services=False (DIY firmware — WinRT GATT cache
-    # may be stale after firmware reflash).
-    client = BleakClient(
-        device,
-        address_type="random",
-        use_cached_services=False,
-    )
-    try:
-        await client.connect()
-    except (BleakError, asyncio.TimeoutError) as e:
-        log(f"Connection failed: {e}")
-        return False
+    # D-01: retry wrapper — defeats WinRT post-wake failure modes
+    # (Could not get GATT services: Unreachable, stale is_connected).
+    # Rebuild a fresh BleakClient each attempt (locked D-05 recipe).
+    client = None
+    for attempt in range(CONNECT_RETRIES):
+        # D-05: pass BLEDevice (not address string), address_type="random" (NimBLE
+        # static-random), use_cached_services=False (DIY firmware — WinRT GATT cache
+        # may be stale after firmware reflash).
+        client = BleakClient(
+            device,
+            address_type="random",
+            use_cached_services=False,
+        )
+        try:
+            await client.connect()
+        except (BleakError, asyncio.TimeoutError) as e:
+            log(f"Connection attempt {attempt + 1}/{CONNECT_RETRIES} failed: {e}")
+            try:
+                await client.disconnect()
+            except BleakError:
+                pass
+            if attempt < CONNECT_RETRIES - 1:
+                await asyncio.sleep(CONNECT_RETRY_DELAY)
+            continue
 
-    if not client.is_connected:
-        log("Connection failed (no error but not connected)")
+        if not client.is_connected:
+            log(f"Connection attempt {attempt + 1}/{CONNECT_RETRIES} failed (not connected)")
+            try:
+                await client.disconnect()
+            except BleakError:
+                pass
+            if attempt < CONNECT_RETRIES - 1:
+                await asyncio.sleep(CONNECT_RETRY_DELAY)
+            continue
+
+        # Connected successfully
+        break
+    else:
+        log(f"Connection failed after {CONNECT_RETRIES} attempts")
         return False
 
     log("Connected")
