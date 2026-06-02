@@ -79,7 +79,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Right-clicking the tray icon presents a Quit action that stops the daemon cleanly
   4. Stopping the WSL distro (`wsl --shutdown`) does not disconnect the Clawdmeter or cause any error in the daemon
   5. Starting a fresh Windows session (WSL never launched) results in the device connecting and displaying usage data normally
-**Plans**: TBD
+**Plans**: 4 plans
+  - [ ] 04-01-PLAN.md — TDD: logo.h → RGBA + RGB565→888 + per-state corner-bubble icon (icon_assets)
+  - [ ] 04-02-PLAN.md — TDD: winreg HKCU\\Run autostart toggle (enable/disable/is_enabled, pythonw)
+  - [ ] 04-03-PLAN.md — Tray runtime: pystray icon/menu/Quit + Error toast + additive TrayState daemon wiring
+  - [ ] 04-04-PLAN.md — install-windows.ps1 + README + no-WSL static guard + manual SC#1-5 hardware record
 **UI hint**: yes
 
 ## Progress
@@ -92,4 +96,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Foundation | 2/2 | Complete   | 2026-06-01 |
 | 2. Core Pipeline | 3/3 | Complete   | 2026-06-01 |
 | 3. Resilience | 3/3 | Complete   | 2026-06-02 |
-| 4. Tray & Autostart | 0/TBD | Not started | - |
+| 4. Tray & Autostart | 0/4 | Not started | - |
