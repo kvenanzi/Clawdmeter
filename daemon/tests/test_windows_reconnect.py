@@ -556,3 +556,42 @@ def test_requirements_windows_unchanged():
     assert result.stdout.strip() == "", (
         f"requirements-windows.txt has unexpected changes:\n{result.stdout}"
     )
+
+
+# ---------------------------------------------------------------------------
+# G-03-01: start_notify() OSError must not crash the daemon (SC#3 power-cycle)
+# ---------------------------------------------------------------------------
+
+def test_start_notify_oserror_does_not_crash_connect_and_run():
+    """G-03-01 regression: on post-power-cycle reconnect, WinRT's start_notify()
+    CCCD write can raise a raw OSError/WinError when the just-rebooted peer GATT
+    server is not yet ready. The optional refresh subscription must degrade
+    gracefully — connect_and_run must NOT propagate the OSError and must proceed
+    into the poll loop (returning normally), so the daemon never restarts (SC#3/SC#4).
+    """
+    device = _make_device()
+    # stop_event set so the poll loop exits immediately after subscription setup
+    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(True))
+
+    mock_client = AsyncMock()
+    mock_client.connect = AsyncMock(return_value=None)  # connect succeeds
+    mock_client.is_connected = True
+    mock_client.disconnect = AsyncMock()
+    # The exact failure observed on hardware (SC#3, 2026-06-02):
+    # OSError: [WinError -2147023673] The operation was canceled by the user.
+    mock_client.start_notify = AsyncMock(
+        side_effect=OSError(-2147023673, "The operation was canceled by the user.")
+    )
+
+    with patch("daemon.claude_usage_daemon_windows.BleakClient", return_value=mock_client), \
+         patch("daemon.claude_usage_daemon_windows.read_token", return_value="fake-token"), \
+         patch("daemon.claude_usage_daemon_windows.poll_api", new=AsyncMock(return_value={"ok": True})):
+        # Must NOT raise OSError — graceful degradation into the poll loop.
+        result = _run(connect_and_run(device, stop_event))
+
+    # start_notify was actually attempted (and raised), but was swallowed.
+    assert mock_client.start_notify.call_count == 1
+    # Function returned normally instead of propagating the OSError.
+    assert result is False
+    # The link was cleaned up via the finally block.
+    assert mock_client.disconnect.call_count >= 1
