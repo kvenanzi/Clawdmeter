@@ -13,7 +13,8 @@ the manual-run fallback, and how to manage or remove autostart.
 | **Native Windows** | Must run on real Windows — not WSL. The script prints a warning and BLE will not work under WSL. |
 | **Python 3.11+** | Download from [python.org](https://www.python.org/downloads/) if not already installed. Ensure "Add python.exe to PATH" is checked during install. |
 | **Claude Code installed** | Install Claude Code and complete `claude login` so credentials exist on disk. |
-| **Clawdmeter powered on** | The device must be on and showing its Bluetooth waiting screen before the daemon starts. |
+| **Clawdmeter powered on** | The device must be powered on and in range before the daemon starts. |
+| **Paired with Windows Bluetooth** | Pair the device once via **Settings → Bluetooth & devices → Add device** (see [Pair the device](#pair-the-device-one-time)). This is required — the device is a bonded BLE HID keyboard, so pairing enables its physical buttons and keeps a persistent connection that shows your last usage even when the daemon is stopped. |
 
 ### Where are my credentials?
 
@@ -29,6 +30,32 @@ absolute path or `CLAUDE_CONFIG_DIR` to a directory to override the search entir
 > **Security note:** The credentials file contains your OAuth token. Never share its contents
 > or embed it in scripts. The daemon reads it from disk and redacts it in all log output
 > (e.g., `sk-ant-…XXXX`).
+
+---
+
+## Pair the device (one time)
+
+The Clawdmeter is a **bonded BLE HID keyboard** as well as a usage display — its firmware
+enables bonding (`NimBLEDevice::setSecurityAuth`) and advertises the HID service so its
+physical buttons act as a keyboard (Space / Shift+Tab). Pair it with Windows **once**,
+before running the daemon:
+
+1. Put the device on its Bluetooth waiting screen (powered on, not yet connected).
+2. Open **Settings → Bluetooth & devices → Add device → Bluetooth**.
+3. Select **Claude Controller** and complete pairing.
+
+**Why this is required:**
+
+- **Keyboard buttons** — HID over BLE requires bonding on Windows. Without pairing, the
+  device's buttons won't reach the PC.
+- **Persistent point-in-time view** — once paired, Windows maintains the BLE link and
+  auto-reconnects the device whenever it is in range. This is intentional: the device keeps
+  showing your **last-synced** usage even after you Quit the daemon, as a glanceable
+  point-in-time view. Quitting the daemon releases only its data connection — it does **not**
+  drop the Windows pairing, so the device stays connected to Windows.
+
+To undo, use **Settings → Bluetooth & devices → (device) → Remove device**. Removing the
+pairing disables the keyboard buttons.
 
 ---
 
@@ -84,8 +111,9 @@ python daemon\claude_usage_daemon_windows.py
 [HH:MM:SS] Sending: {"s":42,"sr":180,"w":17,"wr":8820,"st":"active","ok":true}
 ```
 
-- **No manual Bluetooth pairing is required.** The GATT data service is unencrypted; the
-  daemon connects directly via `BleakScanner` + `BleakClient` with no Windows pairing dialog.
+- **The device must be paired with Windows first** (see [Pair the device](#pair-the-device-one-time)).
+  The daemon then connects over that existing link via `BleakScanner` + `BleakClient`; it does
+  not pop its own pairing dialog.
 - After `Connected`, the daemon polls the Anthropic API immediately and sends the first
   payload within a few seconds of connect (warm token path). With a valid, non-expired token
   the device should leave its waiting screen and show session + weekly percentages within
@@ -166,7 +194,10 @@ Right-click the tray icon for the menu:
 - **Status header** (non-clickable) — live status + last data sync time.
 - **Start at login** (checkable toggle) — enables or disables autostart at runtime.
   Reflects the current registry state each time the menu opens.
-- **Quit** — disconnects the BLE link cleanly and exits. No lingering process.
+- **Quit** — stops the daemon cleanly and exits with no lingering process. It releases the
+  daemon's own data connection but does **not** drop the Windows Bluetooth pairing — the
+  device stays connected to Windows and keeps showing your last-synced usage (point-in-time
+  view).
 
 ### Disabling or removing autostart
 

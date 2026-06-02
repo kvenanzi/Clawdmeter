@@ -25,9 +25,9 @@ failure in "Observed:" and report it rather than silently marking PASS.
 
 **Expected:** Tray icon present at logon. No console/terminal window visible. `pythonw.exe` (not `python.exe`) in Task Manager.
 
-Observed:
+Observed: After signing out and back in, the tray icon started automatically with no cmd or PowerShell popup. (2026-06-02, after the SC#1 fix — autostart via base `pythonw` so the venv redirector no longer spawns a console.)
 
-Result: PASS/FAIL
+Result: PASS
 
 ---
 
@@ -45,9 +45,9 @@ Result: PASS/FAIL
 
 **Expected:** Icon is visible. Tooltip and menu header reflect actual connection state (Connected/Scanning/Error). Each state is legible at notification-area size.
 
-Observed:
+Observed: Tray icon visible. Hover/menu shows "Connected" with a last-update time, matching the live BLE link state. (2026-06-02)
 
-Result: PASS/FAIL
+Result: PASS
 
 ---
 
@@ -60,14 +60,35 @@ Result: PASS/FAIL
 2. Click "Quit" in the menu.
 3. Observe the tray icon disappear.
 4. Check Task Manager: confirm no `pythonw.exe` (or `python.exe`) process remains for Clawdmeter.
-5. On the device side (if connected before Quit): confirm the Clawdmeter device shows a Bluetooth waiting/disconnected screen (not a frozen data screen).
-6. Optionally: check the daemon log output (if launched from a console) for "Daemon stopping" and a clean exit message.
+5. On the device side: the device is a **bonded BLE HID keyboard**, so Windows keeps the
+   Bluetooth link and auto-reconnects it. By design the device **retains its last-synced
+   usage** (a glanceable point-in-time view) and does NOT return to the waiting screen.
+   Confirm it stays connected to Windows.
+6. Optionally: check the console for `Stopping` (printed only after the loop's graceful
+   `client.disconnect()` runs) and a clean exit.
 
-**Expected:** Tray icon disappears promptly. No lingering `pythonw.exe` process. BLE link disconnects (device returns to waiting screen). Clean exit (no crash).
+**Expected (revised 2026-06-02):** Tray icon disappears promptly. No lingering
+`pythonw.exe`/`python.exe` process. The daemon releases its GATT data connection cleanly
+(console prints `Stopping`). The **Windows BLE/HID link intentionally persists** — the
+device stays connected to Windows and keeps showing the last usage (point-in-time view).
+Clean exit (no crash).
 
-Observed:
+> **Criterion revision rationale:** The original "device returns to waiting screen"
+> expectation assumed Quit drops the BLE link. The firmware enables bonding
+> (`setSecurityAuth(true,false,true)`) and is an HID keyboard, so Windows maintains the
+> link for the physical buttons and auto-reconnects the bonded device. Per operator
+> decision (2026-06-02), keeping the connection — and the last-usage point-in-time view —
+> after Quit is the desired behavior. Native Windows pairing is now a documented
+> prerequisite (see `daemon/README-windows.md` → "Pair the device").
 
-Result: PASS/FAIL
+Observed: Right-click → Quit removed the tray icon promptly; no `python.exe`/`pythonw.exe`
+remained in Task Manager. Console logged `Stopping` (graceful `client.disconnect()` ran —
+previously this was skipped because the daemon thread was killed before the `finally`). The
+device stayed connected to Windows and retained its last usage, as intended. (2026-06-02,
+after the graceful-shutdown fix: `_on_quit` now joins the daemon thread and the poll loop
+wakes immediately on stop.)
+
+Result: PASS
 
 ---
 
