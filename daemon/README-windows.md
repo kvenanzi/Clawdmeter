@@ -28,8 +28,8 @@ The daemon probes these paths in order. You can also set `CLAUDE_CREDENTIALS_PAT
 absolute path or `CLAUDE_CONFIG_DIR` to a directory to override the search entirely.
 
 > **Security note:** The credentials file contains your OAuth token. Never share its contents
-> or embed it in scripts. The daemon reads it from disk and redacts it in all log output
-> (e.g., `sk-ant-…XXXX`).
+> or embed it in scripts. The daemon reads it from disk and uses it only as the API
+> `Authorization` header — the token is never written to any log, tooltip, or notification.
 
 ---
 
