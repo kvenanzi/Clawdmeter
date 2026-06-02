@@ -98,6 +98,55 @@ def header_text(ts: TrayState) -> str:
 
 
 # ---------------------------------------------------------------------------
+# single-instance guard (named kernel mutex — no stale-lock problem)
+# ---------------------------------------------------------------------------
+
+# Per-session mutex name. "Local\\" scopes it to the interactive logon, which is
+# exactly the granularity we want: one tray per signed-in user. Both the headless
+# autostart (HKCU\Run pythonw) and an ARSO-restored console instance live in the
+# same session, so this name catches the duplicate-launch collision that produced
+# the "mystery console window fighting the headless tray over BLE" field bug.
+_SINGLETON_MUTEX_NAME = "Local\\Clawdmeter-tray-singleton"
+_ERROR_ALREADY_EXISTS = 183
+
+
+def _acquire_single_instance():
+    """Acquire the process-wide single-instance lock.
+
+    Returns a truthy handle to keep alive for the process lifetime if this is
+    the first/only tray, or None if another Clawdmeter tray already owns the
+    lock (the caller must then exit immediately, before touching BLE).
+
+    Uses a named kernel mutex: Windows releases it automatically when the owning
+    process dies, so there is no stale-lock cleanup (unlike a pidfile). We never
+    CloseHandle it — the handle lives until process exit, which is precisely the
+    lock lifetime we want.
+
+    Off-Windows (Linux dev box / unit tests) this is a no-op that always
+    succeeds — the tray only ever runs on Windows, and the dev box must stay
+    importable for the pure-helper tests.
+    """
+    if sys.platform != "win32":
+        return object()  # no-op sentinel; never blocks off-Windows
+
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+
+    handle = kernel32.CreateMutexW(None, True, _SINGLETON_MUTEX_NAME)
+    if not handle:
+        # Couldn't create the mutex at all — fail OPEN so a kernel quirk never
+        # stops the tray from starting; single-instance is best-effort hardening.
+        return object()
+    if ctypes.get_last_error() == _ERROR_ALREADY_EXISTS:
+        return None  # another instance already holds it
+    return handle
+
+
+# ---------------------------------------------------------------------------
 # main() — tray entry (pystray on main thread, daemon loop in bg thread)
 # ---------------------------------------------------------------------------
 
@@ -108,6 +157,14 @@ def main() -> None:
     so the module can be imported on a GTK-less Linux dev box for unit tests
     of the pure helpers (TrayState, header_text) without pystray failing.
     """
+    # Single-instance guard FIRST — before icons, the daemon thread, or any BLE
+    # work. If another tray already owns the session mutex (e.g. ARSO restored a
+    # console instance and the headless autostart also fired), exit silently.
+    # Under pythonw there is no console to print to, so this is a quiet return.
+    _instance_lock = _acquire_single_instance()
+    if _instance_lock is None:
+        return
+
     import asyncio as _asyncio
     import pystray
     from pystray import Menu, MenuItem

@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest
 
-from daemon.tray_windows import TrayState, header_text
+from daemon.tray_windows import TrayState, header_text, _acquire_single_instance, _ERROR_ALREADY_EXISTS
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +209,60 @@ def test_error_toast_on_entry_only():
     mock_icon.notify.assert_called_once_with(
         "token expired — run claude login", "Clawdmeter"
     )
+
+
+# ---------------------------------------------------------------------------
+# Single-instance guard (named mutex) — duplicate-launch / ARSO collision
+# ---------------------------------------------------------------------------
+# Field bug: Windows "restart apps after sign-in" (ARSO) restored a console
+# `python.exe tray_windows.py` instance while the headless `pythonw` autostart
+# also fired — two trays fighting over the one BLE link. The guard makes a
+# second instance exit before it touches BLE.
+
+def test_single_instance_noop_off_windows():
+    """Off-Windows the guard is a no-op that returns a truthy sentinel (never None)."""
+    with patch("daemon.tray_windows.sys") as mock_sys:
+        mock_sys.platform = "linux"
+        assert _acquire_single_instance() is not None
+
+
+def _fake_kernel32(last_error: int, handle: int):
+    """Build a fake ctypes module tree whose CreateMutexW returns `handle` and
+    whose get_last_error() returns `last_error`."""
+    fake_kernel32 = MagicMock()
+    fake_kernel32.CreateMutexW.return_value = handle
+    fake_ctypes = MagicMock()
+    fake_ctypes.WinDLL.return_value = fake_kernel32
+    fake_ctypes.get_last_error.return_value = last_error
+    return fake_ctypes
+
+
+def test_single_instance_first_instance_gets_handle():
+    """First instance: CreateMutexW succeeds, no prior owner → returns the handle."""
+    fake_ctypes = _fake_kernel32(last_error=0, handle=0xABCD)
+    with patch("daemon.tray_windows.sys") as mock_sys, \
+         patch.dict("sys.modules", {"ctypes": fake_ctypes, "ctypes.wintypes": MagicMock()}):
+        mock_sys.platform = "win32"
+        assert _acquire_single_instance() == 0xABCD
+
+
+def test_single_instance_second_instance_gets_none():
+    """Second instance: mutex already exists → returns None so caller exits."""
+    fake_ctypes = _fake_kernel32(last_error=_ERROR_ALREADY_EXISTS, handle=0xABCD)
+    with patch("daemon.tray_windows.sys") as mock_sys, \
+         patch.dict("sys.modules", {"ctypes": fake_ctypes, "ctypes.wintypes": MagicMock()}):
+        mock_sys.platform = "win32"
+        assert _acquire_single_instance() is None
+
+
+def test_single_instance_fails_open_on_null_handle():
+    """If CreateMutexW returns NULL, fail OPEN (truthy) — never block tray startup."""
+    fake_ctypes = _fake_kernel32(last_error=_ERROR_ALREADY_EXISTS, handle=0)
+    with patch("daemon.tray_windows.sys") as mock_sys, \
+         patch.dict("sys.modules", {"ctypes": fake_ctypes, "ctypes.wintypes": MagicMock()}):
+        mock_sys.platform = "win32"
+        result = _acquire_single_instance()
+        assert result is not None
 
 
 # ---------------------------------------------------------------------------
