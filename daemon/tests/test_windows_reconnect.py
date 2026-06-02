@@ -23,7 +23,7 @@ from daemon.claude_usage_daemon_windows import connect_and_run
 
 def _run(coro):
     """Run a coroutine synchronously for synchronous test functions."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _make_device(address="AA:BB:CC:DD:EE:FF"):
@@ -49,7 +49,7 @@ def test_connect_retry_exhaustion_on_bleak_error(monkeypatch, capsys):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
 
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock(side_effect=BleakError("Unreachable"))
@@ -69,7 +69,7 @@ def test_connect_retry_exhaustion_on_timeout_error(monkeypatch, capsys):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
 
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock(side_effect=asyncio.TimeoutError())
@@ -89,7 +89,7 @@ def test_connect_retry_calls_disconnect_between_attempts(monkeypatch):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
 
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock(side_effect=BleakError("Unreachable"))
@@ -110,7 +110,7 @@ def test_connect_success_on_first_attempt_no_extra_retries(monkeypatch):
 
     device = _make_device()
     # stop_event is set so the loop exits immediately after connecting
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(True))
+    stop_event = asyncio.run(_make_event(True))
 
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock(return_value=None)  # success
@@ -133,7 +133,7 @@ def test_connect_retry_exhaustion_does_not_log_token(monkeypatch, capsys):
 
     TOKEN_SENTINEL = "sk-ant-SUPERSECRET-DO-NOT-LOG-12345"
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
 
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock(side_effect=BleakError("Unreachable"))
@@ -169,7 +169,7 @@ def test_zombie_link_break_after_limit_consecutive_failures(monkeypatch):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
     mock_client = _make_zombie_client()
 
     write_call_count = [0]
@@ -211,7 +211,7 @@ def test_zombie_counter_resets_on_success_with_raised_limit(monkeypatch):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
     mock_client = _make_zombie_client()
 
     # Sequence: False (counter=1), True (counter reset to 0), False (counter=1 again), break
@@ -277,7 +277,7 @@ def test_zombie_break_disconnect_called_in_finally(monkeypatch):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
     mock_client = _make_zombie_client()
 
     async def fake_write_payload(payload):
@@ -313,7 +313,7 @@ def test_zombie_break_returns_used_successfully_false(monkeypatch):
     import daemon.claude_usage_daemon_windows as mod
 
     device = _make_device()
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    stop_event = asyncio.run(_make_event(False))
     mock_client = _make_zombie_client()
 
     async def fake_write_payload(payload):
@@ -457,7 +457,7 @@ def test_main_connect_fail_uses_reconnect_backoff():
     async def fake_scan():
         return fake_device  # always finds device
 
-    async def fake_connect_and_run(device, event):
+    async def fake_connect_and_run(device, event, tray_state=None):
         return False  # always fails -> fast-reconnect regime
 
     async def fake_wait_for(coro, timeout):
@@ -505,7 +505,7 @@ def test_main_reconnect_backoff_reset_on_success():
     async def fake_scan():
         return fake_device
 
-    async def fake_connect_and_run(device, event):
+    async def fake_connect_and_run(device, event, tray_state=None):
         idx = connect_idx[0]
         connect_idx[0] += 1
         if idx < len(connect_results):
@@ -544,18 +544,23 @@ def test_main_no_saved_addr_file_or_skip_addr():
         "main() must not reference retrieve_connected (macOS HID path)"
 
 
-def test_requirements_windows_unchanged():
-    """requirements-windows.txt must not have been modified (D-02: no new dependency)."""
-    import subprocess
-    result = subprocess.run(
-        ["git", "diff", "--stat", "--", "daemon/requirements-windows.txt"],
-        capture_output=True, text=True,
-        cwd=str(Path(__file__).parent.parent.parent),
-    )
-    # No output means no change
-    assert result.stdout.strip() == "", (
-        f"requirements-windows.txt has unexpected changes:\n{result.stdout}"
-    )
+def test_requirements_windows_contains_required_deps():
+    """requirements-windows.txt must contain the expected deps.
+
+    Phase 3 (reconnect) added no new deps; Phase 4 (tray) adds pystray + Pillow.
+    This test asserts the final expected state: bleak, httpx, pystray, Pillow
+    must be present; winreg must NOT be listed (it is stdlib — no install needed).
+    """
+    req_path = Path(__file__).parent.parent / "requirements-windows.txt"
+    content = req_path.read_text()
+    lines = {line.strip().lower() for line in content.splitlines()
+             if line.strip() and not line.strip().startswith("#")}
+
+    assert "bleak" in lines, "bleak must be in requirements-windows.txt"
+    assert "httpx" in lines, "httpx must be in requirements-windows.txt"
+    assert "pystray" in lines, "pystray must be in requirements-windows.txt (Phase 4)"
+    assert "pillow" in lines, "Pillow must be in requirements-windows.txt (Phase 4)"
+    assert "winreg" not in lines, "winreg is stdlib — must NOT be in requirements-windows.txt"
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +576,7 @@ def test_start_notify_oserror_does_not_crash_connect_and_run():
     """
     device = _make_device()
     # stop_event set so the poll loop exits immediately after subscription setup
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(True))
+    stop_event = asyncio.run(_make_event(True))
 
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock(return_value=None)  # connect succeeds
