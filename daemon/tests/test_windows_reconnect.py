@@ -8,6 +8,7 @@ Covers:
 Run: python -m pytest daemon/tests/test_windows_reconnect.py -x -q
 """
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -341,3 +342,190 @@ def test_zombie_break_returns_used_successfully_false(monkeypatch):
 
     # main() uses this return value to route into reconnect branch
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# D-05: split fast-reconnect vs slow-search backoff in main()
+# ---------------------------------------------------------------------------
+
+def test_next_backoff_slow_search_doubles_to_60():
+    """_next_backoff doubles correctly and never exceeds 60 (slow-search cap)."""
+    import daemon.claude_usage_daemon_windows as mod
+
+    values = []
+    b = 1
+    for _ in range(10):
+        b = mod._next_backoff(b, 60)
+        values.append(b)
+
+    assert values == [2, 4, 8, 16, 32, 60, 60, 60, 60, 60]
+    assert max(values) <= 60
+
+
+def test_next_backoff_fast_reconnect_doubles_to_cap():
+    """_next_backoff doubles correctly and never exceeds RECONNECT_BACKOFF_CAP (default 8)."""
+    import daemon.claude_usage_daemon_windows as mod
+
+    cap = mod.RECONNECT_BACKOFF_CAP
+    assert cap < 60, "Fast cap must be strictly lower than search cap"
+
+    values = []
+    b = 1
+    for _ in range(8):
+        b = mod._next_backoff(b, cap)
+        values.append(b)
+
+    # Should double until hitting the cap, then stay there
+    assert max(values) <= cap
+    # Should reach the cap (not just stay at 1)
+    assert values[-1] == cap
+
+
+def test_next_backoff_one_to_two():
+    """_next_backoff(1, 60) == 2 (basic sanity)."""
+    import daemon.claude_usage_daemon_windows as mod
+
+    assert mod._next_backoff(1, 60) == 2
+
+
+def test_next_backoff_at_cap_stays():
+    """_next_backoff(cap, cap) == cap (does not overflow)."""
+    import daemon.claude_usage_daemon_windows as mod
+
+    assert mod._next_backoff(mod.RECONNECT_BACKOFF_CAP, mod.RECONNECT_BACKOFF_CAP) == mod.RECONNECT_BACKOFF_CAP
+
+
+def test_main_scan_miss_uses_search_backoff():
+    """When scan_for_device returns None, asyncio.wait_for receives search_backoff timeout values."""
+    import daemon.claude_usage_daemon_windows as mod
+
+    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    recorded_timeouts = []
+    call_count = [0]
+    MAX_CALLS = 3
+
+    async def fake_scan():
+        return None  # always miss -> slow-search regime
+
+    async def fake_wait_for(coro, timeout):
+        recorded_timeouts.append(timeout)
+        call_count[0] += 1
+        if call_count[0] >= MAX_CALLS:
+            stop_event.set()
+        raise asyncio.TimeoutError()
+
+    with patch("daemon.claude_usage_daemon_windows.scan_for_device", side_effect=fake_scan), \
+         patch("daemon.claude_usage_daemon_windows.asyncio.wait_for", side_effect=fake_wait_for):
+        _run(mod.main())
+
+    # Should have recorded timeouts from search_backoff sequence: 1, 2 (then stop)
+    assert len(recorded_timeouts) >= 2
+    # Timeouts should be doubling (search_backoff sequence)
+    assert recorded_timeouts[0] == 1
+    assert recorded_timeouts[1] == 2
+    # None should exceed the search cap (60)
+    assert all(t <= 60 for t in recorded_timeouts)
+
+
+def test_main_connect_fail_uses_reconnect_backoff():
+    """When connect_and_run returns False, asyncio.wait_for receives reconnect_backoff timeouts (fast cap)."""
+    import daemon.claude_usage_daemon_windows as mod
+
+    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    fake_device = _make_device()
+    recorded_timeouts = []
+    call_count = [0]
+    MAX_CALLS = 3
+
+    async def fake_scan():
+        return fake_device  # always finds device
+
+    async def fake_connect_and_run(device, event):
+        return False  # always fails -> fast-reconnect regime
+
+    async def fake_wait_for(coro, timeout):
+        recorded_timeouts.append(timeout)
+        call_count[0] += 1
+        if call_count[0] >= MAX_CALLS:
+            stop_event.set()
+        raise asyncio.TimeoutError()
+
+    with patch("daemon.claude_usage_daemon_windows.scan_for_device", side_effect=fake_scan), \
+         patch("daemon.claude_usage_daemon_windows.connect_and_run", side_effect=fake_connect_and_run), \
+         patch("daemon.claude_usage_daemon_windows.asyncio.wait_for", side_effect=fake_wait_for):
+        _run(mod.main())
+
+    # Should have recorded timeouts from reconnect_backoff sequence: 1, 2 (then stop)
+    assert len(recorded_timeouts) >= 2
+    assert recorded_timeouts[0] == 1
+    assert recorded_timeouts[1] == 2
+    # All timeouts must be at or below RECONNECT_BACKOFF_CAP (fast cap, < 60)
+    assert all(t <= mod.RECONNECT_BACKOFF_CAP for t in recorded_timeouts)
+
+
+def test_main_reconnect_backoff_reset_on_success():
+    """A successful connect_and_run (returns True) resets reconnect_backoff to 1."""
+    import daemon.claude_usage_daemon_windows as mod
+
+    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    fake_device = _make_device()
+    recorded_timeouts = []
+    call_count = [0]
+
+    # Sequence: fail (builds backoff to 1), succeed (resets), fail (backoff starts from 1 again)
+    connect_results = [False, True, False]
+    connect_idx = [0]
+
+    async def fake_scan():
+        return fake_device
+
+    async def fake_connect_and_run(device, event):
+        idx = connect_idx[0]
+        connect_idx[0] += 1
+        if idx < len(connect_results):
+            return connect_results[idx]
+        return False
+
+    async def fake_wait_for(coro, timeout):
+        recorded_timeouts.append(timeout)
+        call_count[0] += 1
+        if call_count[0] >= 2:  # stop after 2 waits (fail + post-success fail)
+            stop_event.set()
+        raise asyncio.TimeoutError()
+
+    with patch("daemon.claude_usage_daemon_windows.scan_for_device", side_effect=fake_scan), \
+         patch("daemon.claude_usage_daemon_windows.connect_and_run", side_effect=fake_connect_and_run), \
+         patch("daemon.claude_usage_daemon_windows.asyncio.wait_for", side_effect=fake_wait_for):
+        _run(mod.main())
+
+    # First wait: reconnect_backoff=1 (initial failure)
+    # Second wait: reconnect_backoff=1 again (reset by success, then another failure)
+    assert len(recorded_timeouts) >= 2
+    assert recorded_timeouts[0] == 1, f"Expected 1 on first fail, got {recorded_timeouts[0]}"
+    assert recorded_timeouts[1] == 1, f"Expected 1 after success reset, got {recorded_timeouts[1]}"
+
+
+def test_main_no_saved_addr_file_or_skip_addr():
+    """main() does not reference SAVED_ADDR_FILE or skip_addr (Windows is stateless - D-04)."""
+    import inspect
+    import daemon.claude_usage_daemon_windows as mod
+
+    source = inspect.getsource(mod.main)
+    assert "SAVED_ADDR_FILE" not in source, "main() must not reference SAVED_ADDR_FILE (D-04)"
+    assert "skip_addr" not in source, "main() must not reference skip_addr (macOS-only)"
+    assert "retrieve_connected" not in source.lower(), \
+        "main() must not reference retrieve_connected (macOS HID path)"
+
+
+def test_requirements_windows_unchanged():
+    """requirements-windows.txt must not have been modified (D-02: no new dependency)."""
+    import subprocess
+    result = subprocess.run(
+        ["git", "diff", "--stat", "--", "daemon/requirements-windows.txt"],
+        capture_output=True, text=True,
+        cwd=str(Path(__file__).parent.parent.parent),
+    )
+    # No output means no change
+    assert result.stdout.strip() == "", (
+        f"requirements-windows.txt has unexpected changes:\n{result.stdout}"
+    )
