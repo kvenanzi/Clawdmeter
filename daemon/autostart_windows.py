@@ -38,16 +38,25 @@ def log(msg: str) -> None:
 def _command(tray_script: str | None = None) -> str:
     """Build the headless launch command for the Run value.
 
-    Derives pythonw.exe from sys.executable so the path is never hard-coded
-    (D-08, CLAUDE.md "repoint ExecStart" lesson).  Both paths are quoted for
-    space safety.
+    Uses the BASE interpreter's pythonw.exe — `sys.base_exec_prefix` points at
+    the real Python install even inside a venv — NOT the venv's
+    `Scripts\\pythonw.exe`.  The venv pythonw is a redirector stub that
+    re-launches the CONSOLE `python.exe` build as a child process (a CPython
+    venv-launcher bug, verified empirically on Python 3.13), which pops a black
+    console window at logon and kills the tray when closed (field bug, SC#1).
+    The base pythonw loads in-process and is genuinely windowless.
+
+    The path is never hard-coded (D-08, CLAUDE.md "repoint ExecStart" lesson);
+    both paths are quoted for space safety.  tray_windows.py adds the venv's
+    site-packages to sys.path itself, so the venv's deps still resolve under the
+    base interpreter.
 
     Args:
         tray_script: absolute path to the tray entry script.  Defaults to this
                      module's own path (useful when autostart_windows.py IS
                      the entry point, but callers should pass tray_windows.py).
     """
-    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    pythonw = os.path.join(sys.base_exec_prefix, "pythonw.exe")
     script = os.path.abspath(tray_script if tray_script is not None else __file__)
     return f'"{pythonw}" "{script}"'
 

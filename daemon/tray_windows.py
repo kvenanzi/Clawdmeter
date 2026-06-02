@@ -31,6 +31,16 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+# Autostart launches us with the BASE interpreter's pythonw.exe, not the venv's
+# (see autostart_windows._command — the venv pythonw redirector pops a console
+# window). The base interpreter does NOT see the venv's site-packages, so add
+# them here to resolve pystray/bleak/PIL. os.path.isdir guards the no-venv and
+# already-inside-venv cases; site.addsitedir is a no-op on a missing dir anyway.
+_VENV_SITE = os.path.join(_REPO_ROOT, ".venv", "Lib", "site-packages")
+if os.path.isdir(_VENV_SITE):
+    import site
+    site.addsitedir(_VENV_SITE)
+
 # ---------------------------------------------------------------------------
 # TrayState — thread-safe scalar bridge (loop -> tray)
 # ---------------------------------------------------------------------------
@@ -197,7 +207,10 @@ def main() -> None:
         if autostart.is_enabled():
             autostart.disable()
         else:
-            autostart.enable()
+            # Pass THIS file explicitly — without it enable() defaults the Run
+            # value to autostart_windows.py (which has no entry point and starts
+            # nothing), silently breaking menu-enabled autostart.
+            autostart.enable(tray_script=os.path.abspath(__file__))
         icon.update_menu()
 
     icon.menu = Menu(

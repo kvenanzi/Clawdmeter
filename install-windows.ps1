@@ -104,11 +104,19 @@ if ($LASTEXITCODE -ne 0) { throw "Autostart registration failed (exit $LASTEXITC
 Log "Autostart registered - Clawdmeter will launch automatically at next logon"
 
 # ------------------------------------------------------------------
-# Step 4: Launch the tray app (headless - pythonw.exe, no console window)
+# Step 4: Launch the tray app (headless - BASE pythonw.exe, no console window)
 # ------------------------------------------------------------------
+# Use the BASE interpreter's pythonw.exe, NOT the venv's Scripts\pythonw.exe.
+# The venv pythonw is a redirector stub that re-launches the CONSOLE python.exe
+# build as a child (a CPython venv-launcher bug), popping a black console window.
+# tray_windows.py adds the venv site-packages to sys.path itself, so the venv's
+# dependencies still resolve. (See autostart_windows._command - same rationale.)
+$BasePrefix  = & $PythonExe -c "import sys; print(sys.base_exec_prefix)"
+$BasePythonw = Join-Path $BasePrefix "pythonw.exe"
+
 Log "Launching tray app ..."
 $StartArgs = @{
-    FilePath         = $PythonwExe
+    FilePath         = $BasePythonw
     ArgumentList     = "`"$TrayScript`""
     WorkingDirectory = $RepoRoot
 }
