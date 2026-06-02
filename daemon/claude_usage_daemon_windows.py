@@ -28,6 +28,13 @@ REQ_CHAR_UUID = "4c41555a-4465-7669-6365-000000000004"
 POLL_INTERVAL = 60
 TICK = 5
 SCAN_TIMEOUT = 8.0
+CONNECT_RETRIES = 3        # D-01: attempts before giving up on a device
+CONNECT_RETRY_DELAY = 2.0  # D-01: seconds between failed connect attempts
+ZOMBIE_BREAK_LIMIT = 1     # D-03: consecutive write failures before abandoning a half-open link
+                           # N=1: breaks at T=60s, leaves ~60s headroom for reconnect+poll inside 120s SLA
+                           # N=2 would bust the 120s budget before reconnect even begins
+RECONNECT_BACKOFF_CAP = 8  # D-05: fast-reconnect cap (seconds); keeps stacked retries inside 120s SLA
+                           # ~5–10s band per CONTEXT.md Claude's Discretion; 8 chosen as middle ground
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_HEADERS_TEMPLATE = {
@@ -109,9 +116,15 @@ class Session:
         self.refresh_requested.set()
 
     async def setup_refresh_subscription(self) -> None:
+        # The refresh subscription is optional — the 60s poll loop works without it.
+        # WinRT's start_notify() CCCD write can raise a raw OSError/WinError (not
+        # wrapped as BleakError) when the peer GATT server is transiently unavailable,
+        # e.g. a just-power-cycled ESP32 whose server is not yet ready (G-03-01, SC#3).
+        # Degrade gracefully instead of crashing the daemon so it stays single-process
+        # across a power-cycle reconnect (SC#4, no restart).
         try:
             await self.client.start_notify(REQ_CHAR_UUID, self._on_refresh)
-        except (BleakError, ValueError) as e:
+        except (BleakError, ValueError, OSError) as e:
             log(f"Refresh subscription unavailable: {e}")
 
     async def write_payload(self, payload: dict) -> bool:
@@ -230,22 +243,45 @@ async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
     Returns True if at least one successful write occurred.
     """
     log(f"Connecting to {device.address}...")
-    # D-05: pass BLEDevice (not address string), address_type="random" (NimBLE
-    # static-random), use_cached_services=False (DIY firmware — WinRT GATT cache
-    # may be stale after firmware reflash).
-    client = BleakClient(
-        device,
-        address_type="random",
-        use_cached_services=False,
-    )
-    try:
-        await client.connect()
-    except (BleakError, asyncio.TimeoutError) as e:
-        log(f"Connection failed: {e}")
-        return False
+    # D-01: retry wrapper — defeats WinRT post-wake failure modes
+    # (Could not get GATT services: Unreachable, stale is_connected).
+    # Rebuild a fresh BleakClient each attempt (locked D-05 recipe).
+    client = None
+    for attempt in range(CONNECT_RETRIES):
+        # D-05: pass BLEDevice (not address string), address_type="random" (NimBLE
+        # static-random), use_cached_services=False (DIY firmware — WinRT GATT cache
+        # may be stale after firmware reflash).
+        client = BleakClient(
+            device,
+            address_type="random",
+            use_cached_services=False,
+        )
+        try:
+            await client.connect()
+        except (BleakError, asyncio.TimeoutError) as e:
+            log(f"Connection attempt {attempt + 1}/{CONNECT_RETRIES} failed: {e}")
+            try:
+                await client.disconnect()
+            except BleakError:
+                pass
+            if attempt < CONNECT_RETRIES - 1:
+                await asyncio.sleep(CONNECT_RETRY_DELAY)
+            continue
 
-    if not client.is_connected:
-        log("Connection failed (no error but not connected)")
+        if not client.is_connected:
+            log(f"Connection attempt {attempt + 1}/{CONNECT_RETRIES} failed (not connected)")
+            try:
+                await client.disconnect()
+            except BleakError:
+                pass
+            if attempt < CONNECT_RETRIES - 1:
+                await asyncio.sleep(CONNECT_RETRY_DELAY)
+            continue
+
+        # Connected successfully
+        break
+    else:
+        log(f"Connection failed after {CONNECT_RETRIES} attempts")
         return False
 
     log("Connected")
@@ -254,6 +290,7 @@ async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
 
     last_poll = 0.0  # D-03: poll immediately on first connect
     used_successfully = False
+    consecutive_failures = 0  # D-03: zombie-link break counter
     try:
         while client.is_connected and not stop_event.is_set():
             now = time.time()
@@ -269,6 +306,15 @@ async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
                         if await session.write_payload(payload):
                             last_poll = time.time()
                             used_successfully = True
+                            consecutive_failures = 0  # D-03: reset on success
+                        else:
+                            consecutive_failures += 1
+                            if consecutive_failures >= ZOMBIE_BREAK_LIMIT:
+                                log(
+                                    f"Zombie link detected ({consecutive_failures} consecutive"
+                                    f" write failures); abandoning connection"
+                                )
+                                break
 
             try:
                 await asyncio.wait_for(session.refresh_requested.wait(), timeout=TICK)
@@ -282,6 +328,15 @@ async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
 
     log("Device disconnected" if not stop_event.is_set() else "Stopping")
     return used_successfully
+
+
+def _next_backoff(current: int, cap: int) -> int:
+    """D-05: double current backoff value, clamped to cap.
+
+    Pure helper — unit-testable without driving the main loop.
+    Used by both slow-search (cap=60) and fast-reconnect (cap=RECONNECT_BACKOFF_CAP) regimes.
+    """
+    return min(current * 2, cap)
 
 
 async def main() -> None:
@@ -302,27 +357,34 @@ async def main() -> None:
     log("=== Claude Usage Tracker Daemon (BLE, Windows) ===")
     log(f"Poll interval: {POLL_INTERVAL}s")
 
-    backoff = 1
+    # D-05: two distinct backoff regimes — slow-search (device absent) vs fast-reconnect (link dropped)
+    search_backoff = 1     # caps at 60s — gentle, for a device that is genuinely absent/off
+    reconnect_backoff = 1  # caps at RECONNECT_BACKOFF_CAP — fast, to clear the 120s SLA after a drop
     while not stop_event.is_set():
         device = await scan_for_device()
         if not device:
-            log(f"Device not found, retrying in {backoff}s...")
+            # Slow-search regime: device was not found by scan — back off gently
+            log(f"Device not found, retrying in {search_backoff}s...")
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=backoff)
+                await asyncio.wait_for(stop_event.wait(), timeout=search_backoff)
             except asyncio.TimeoutError:
                 pass
-            backoff = min(backoff * 2, 60)
+            search_backoff = _next_backoff(search_backoff, 60)
             continue
 
         ok = await connect_and_run(device, stop_event)
         if not ok:
+            # Fast-reconnect regime: had/attempted a link that dropped — retry quickly
+            log(f"Connection lost, reconnecting in {reconnect_backoff}s...")
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=backoff)
+                await asyncio.wait_for(stop_event.wait(), timeout=reconnect_backoff)
             except asyncio.TimeoutError:
                 pass
-            backoff = min(backoff * 2, 60)
+            reconnect_backoff = _next_backoff(reconnect_backoff, RECONNECT_BACKOFF_CAP)
         else:
-            backoff = 1
+            # Successful session — reset reconnect counter to floor; search_backoff also reset
+            reconnect_backoff = 1
+            search_backoff = 1
 
 
 if __name__ == "__main__":
