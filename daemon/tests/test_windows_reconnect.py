@@ -399,7 +399,15 @@ def test_main_scan_miss_uses_search_backoff():
     """When scan_for_device returns None, asyncio.wait_for receives search_backoff timeout values."""
     import daemon.claude_usage_daemon_windows as mod
 
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    # Capture main()'s internal stop_event by intercepting asyncio.Event()
+    internal_stop_event = [None]
+    real_Event = asyncio.Event
+
+    def capturing_Event():
+        ev = real_Event()
+        internal_stop_event[0] = ev
+        return ev
+
     recorded_timeouts = []
     call_count = [0]
     MAX_CALLS = 3
@@ -410,15 +418,16 @@ def test_main_scan_miss_uses_search_backoff():
     async def fake_wait_for(coro, timeout):
         recorded_timeouts.append(timeout)
         call_count[0] += 1
-        if call_count[0] >= MAX_CALLS:
-            stop_event.set()
+        if call_count[0] >= MAX_CALLS and internal_stop_event[0] is not None:
+            internal_stop_event[0].set()  # terminate main()'s outer while loop
         raise asyncio.TimeoutError()
 
-    with patch("daemon.claude_usage_daemon_windows.scan_for_device", side_effect=fake_scan), \
+    with patch("daemon.claude_usage_daemon_windows.asyncio.Event", side_effect=capturing_Event), \
+         patch("daemon.claude_usage_daemon_windows.scan_for_device", side_effect=fake_scan), \
          patch("daemon.claude_usage_daemon_windows.asyncio.wait_for", side_effect=fake_wait_for):
         _run(mod.main())
 
-    # Should have recorded timeouts from search_backoff sequence: 1, 2 (then stop)
+    # Should have recorded timeouts from search_backoff sequence: 1, 2, 4 (then stop)
     assert len(recorded_timeouts) >= 2
     # Timeouts should be doubling (search_backoff sequence)
     assert recorded_timeouts[0] == 1
@@ -431,7 +440,15 @@ def test_main_connect_fail_uses_reconnect_backoff():
     """When connect_and_run returns False, asyncio.wait_for receives reconnect_backoff timeouts (fast cap)."""
     import daemon.claude_usage_daemon_windows as mod
 
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    # Capture main()'s internal stop_event
+    internal_stop_event = [None]
+    real_Event = asyncio.Event
+
+    def capturing_Event():
+        ev = real_Event()
+        internal_stop_event[0] = ev
+        return ev
+
     fake_device = _make_device()
     recorded_timeouts = []
     call_count = [0]
@@ -446,16 +463,17 @@ def test_main_connect_fail_uses_reconnect_backoff():
     async def fake_wait_for(coro, timeout):
         recorded_timeouts.append(timeout)
         call_count[0] += 1
-        if call_count[0] >= MAX_CALLS:
-            stop_event.set()
+        if call_count[0] >= MAX_CALLS and internal_stop_event[0] is not None:
+            internal_stop_event[0].set()
         raise asyncio.TimeoutError()
 
-    with patch("daemon.claude_usage_daemon_windows.scan_for_device", side_effect=fake_scan), \
+    with patch("daemon.claude_usage_daemon_windows.asyncio.Event", side_effect=capturing_Event), \
+         patch("daemon.claude_usage_daemon_windows.scan_for_device", side_effect=fake_scan), \
          patch("daemon.claude_usage_daemon_windows.connect_and_run", side_effect=fake_connect_and_run), \
          patch("daemon.claude_usage_daemon_windows.asyncio.wait_for", side_effect=fake_wait_for):
         _run(mod.main())
 
-    # Should have recorded timeouts from reconnect_backoff sequence: 1, 2 (then stop)
+    # Should have recorded timeouts from reconnect_backoff sequence: 1, 2, 4 (then stop)
     assert len(recorded_timeouts) >= 2
     assert recorded_timeouts[0] == 1
     assert recorded_timeouts[1] == 2
@@ -467,12 +485,20 @@ def test_main_reconnect_backoff_reset_on_success():
     """A successful connect_and_run (returns True) resets reconnect_backoff to 1."""
     import daemon.claude_usage_daemon_windows as mod
 
-    stop_event = asyncio.get_event_loop().run_until_complete(_make_event(False))
+    # Capture main()'s internal stop_event
+    internal_stop_event = [None]
+    real_Event = asyncio.Event
+
+    def capturing_Event():
+        ev = real_Event()
+        internal_stop_event[0] = ev
+        return ev
+
     fake_device = _make_device()
     recorded_timeouts = []
     call_count = [0]
 
-    # Sequence: fail (builds backoff to 1), succeed (resets), fail (backoff starts from 1 again)
+    # Sequence: fail (reconnect_backoff=1), succeed (reset), fail (reconnect_backoff=1 again)
     connect_results = [False, True, False]
     connect_idx = [0]
 
@@ -489,11 +515,12 @@ def test_main_reconnect_backoff_reset_on_success():
     async def fake_wait_for(coro, timeout):
         recorded_timeouts.append(timeout)
         call_count[0] += 1
-        if call_count[0] >= 2:  # stop after 2 waits (fail + post-success fail)
-            stop_event.set()
+        if call_count[0] >= 2 and internal_stop_event[0] is not None:
+            internal_stop_event[0].set()  # stop after 2 waits (first fail + post-success fail)
         raise asyncio.TimeoutError()
 
-    with patch("daemon.claude_usage_daemon_windows.scan_for_device", side_effect=fake_scan), \
+    with patch("daemon.claude_usage_daemon_windows.asyncio.Event", side_effect=capturing_Event), \
+         patch("daemon.claude_usage_daemon_windows.scan_for_device", side_effect=fake_scan), \
          patch("daemon.claude_usage_daemon_windows.connect_and_run", side_effect=fake_connect_and_run), \
          patch("daemon.claude_usage_daemon_windows.asyncio.wait_for", side_effect=fake_wait_for):
         _run(mod.main())

@@ -33,6 +33,8 @@ CONNECT_RETRY_DELAY = 2.0  # D-01: seconds between failed connect attempts
 ZOMBIE_BREAK_LIMIT = 1     # D-03: consecutive write failures before abandoning a half-open link
                            # N=1: breaks at T=60s, leaves ~60s headroom for reconnect+poll inside 120s SLA
                            # N=2 would bust the 120s budget before reconnect even begins
+RECONNECT_BACKOFF_CAP = 8  # D-05: fast-reconnect cap (seconds); keeps stacked retries inside 120s SLA
+                           # ~5–10s band per CONTEXT.md Claude's Discretion; 8 chosen as middle ground
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_HEADERS_TEMPLATE = {
@@ -322,6 +324,15 @@ async def connect_and_run(device, stop_event: asyncio.Event) -> bool:
     return used_successfully
 
 
+def _next_backoff(current: int, cap: int) -> int:
+    """D-05: double current backoff value, clamped to cap.
+
+    Pure helper — unit-testable without driving the main loop.
+    Used by both slow-search (cap=60) and fast-reconnect (cap=RECONNECT_BACKOFF_CAP) regimes.
+    """
+    return min(current * 2, cap)
+
+
 async def main() -> None:
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -340,27 +351,34 @@ async def main() -> None:
     log("=== Claude Usage Tracker Daemon (BLE, Windows) ===")
     log(f"Poll interval: {POLL_INTERVAL}s")
 
-    backoff = 1
+    # D-05: two distinct backoff regimes — slow-search (device absent) vs fast-reconnect (link dropped)
+    search_backoff = 1     # caps at 60s — gentle, for a device that is genuinely absent/off
+    reconnect_backoff = 1  # caps at RECONNECT_BACKOFF_CAP — fast, to clear the 120s SLA after a drop
     while not stop_event.is_set():
         device = await scan_for_device()
         if not device:
-            log(f"Device not found, retrying in {backoff}s...")
+            # Slow-search regime: device was not found by scan — back off gently
+            log(f"Device not found, retrying in {search_backoff}s...")
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=backoff)
+                await asyncio.wait_for(stop_event.wait(), timeout=search_backoff)
             except asyncio.TimeoutError:
                 pass
-            backoff = min(backoff * 2, 60)
+            search_backoff = _next_backoff(search_backoff, 60)
             continue
 
         ok = await connect_and_run(device, stop_event)
         if not ok:
+            # Fast-reconnect regime: had/attempted a link that dropped — retry quickly
+            log(f"Connection lost, reconnecting in {reconnect_backoff}s...")
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=backoff)
+                await asyncio.wait_for(stop_event.wait(), timeout=reconnect_backoff)
             except asyncio.TimeoutError:
                 pass
-            backoff = min(backoff * 2, 60)
+            reconnect_backoff = _next_backoff(reconnect_backoff, RECONNECT_BACKOFF_CAP)
         else:
-            backoff = 1
+            # Successful session — reset reconnect counter to floor; search_backoff also reset
+            reconnect_backoff = 1
+            search_backoff = 1
 
 
 if __name__ == "__main__":
