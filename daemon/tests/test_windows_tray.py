@@ -236,3 +236,39 @@ def test_repo_root_on_sys_path_after_import():
     import daemon.tray_windows as tw
 
     assert tw._REPO_ROOT in sys.path
+
+
+# ---------------------------------------------------------------------------
+# Regression: daemon main() must run in a BACKGROUND thread (SC#1 tray launch)
+# ---------------------------------------------------------------------------
+# Field bug: under the tray the loop runs in threading.Thread (pystray owns the
+# main thread). OS signal-handler installation (loop.add_signal_handler /
+# signal.signal) only works on the main thread, so main() raised
+# "signal only works in main thread" and the daemon thread died on startup.
+# main() must guard signal setup to the main thread; the tray owns shutdown.
+
+def test_main_runs_in_background_thread_without_signal_error():
+    """main(tray_state=ts) started from a non-main thread must not raise on signal setup."""
+    import threading as _threading
+    import daemon.claude_usage_daemon_windows as mod
+
+    ts = TrayState()
+    errors: list = []
+
+    async def _fake_scan():
+        ts.stop_event.set()   # exit the loop immediately
+        return None
+
+    def _run() -> None:
+        try:
+            with patch.object(mod, "scan_for_device", side_effect=_fake_scan):
+                asyncio.run(mod.main(tray_state=ts))
+        except Exception as exc:   # noqa: BLE001 — capture for the assertion
+            errors.append(exc)
+
+    t = _threading.Thread(target=_run)
+    t.start()
+    t.join(timeout=10)
+
+    assert not t.is_alive(), "daemon main() hung in background thread"
+    assert not errors, f"main() raised in a background thread: {errors!r}"

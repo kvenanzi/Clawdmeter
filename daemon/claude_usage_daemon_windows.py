@@ -13,6 +13,7 @@ import os
 import re
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -362,12 +363,21 @@ async def main(tray_state=None) -> None:
         log("Daemon stopping")
         stop_event.set()
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, _stop)
-        except NotImplementedError:
-            # Windows: add_signal_handler not supported; fall back to signal.signal
-            signal.signal(sig, _stop)
+    # OS signal handlers can only be installed from the main thread, and
+    # loop.add_signal_handler is unsupported on Windows. When running under the
+    # tray (04-03) the loop lives in a background thread and the tray owns clean
+    # shutdown via stop_event (loop.call_soon_threadsafe), so skip silently there.
+    if threading.current_thread() is threading.main_thread():
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _stop)
+            except NotImplementedError:
+                # Windows: add_signal_handler not supported; fall back to signal.signal
+                try:
+                    signal.signal(sig, _stop)
+                except ValueError:
+                    # Not the main thread of the main interpreter — tray owns shutdown.
+                    pass
 
     log("=== Claude Usage Tracker Daemon (BLE, Windows) ===")
     log(f"Poll interval: {POLL_INTERVAL}s")
