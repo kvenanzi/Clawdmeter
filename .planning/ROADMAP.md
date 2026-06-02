@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Foundation** - GATT encryption gate-check + Windows credential reading + project scaffold (completed 2026-06-01)
 - [x] **Phase 2: Core Pipeline** - BLE scan/connect/write + Anthropic API polling end-to-end (completed 2026-06-01)
 - [x] **Phase 3: Resilience** - Auto-reconnect after sleep, out-of-range, and device drop (completed 2026-06-02)
-- [ ] **Phase 4: Tray & Autostart** - System-tray icon + login startup + WSL independence verified
+- [x] **Phase 4: Tray & Autostart** - System-tray icon + login startup + WSL independence verified (completed 2026-06-02)
 
 ## Phase Details
 
@@ -83,7 +83,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   - [x] 04-01-PLAN.md — TDD: logo.h → RGBA + RGB565→888 + per-state corner-bubble icon (icon_assets)
   - [x] 04-02-PLAN.md — TDD: winreg HKCU\\Run autostart toggle (enable/disable/is_enabled, pythonw)
   - [x] 04-03-PLAN.md — Tray runtime: pystray icon/menu/Quit + Error toast + additive TrayState daemon wiring
-  - [ ] 04-04-PLAN.md — install-windows.ps1 + README + no-WSL static guard + manual SC#1-5 hardware record
+  - [x] 04-04-PLAN.md — install-windows.ps1 + README + no-WSL static guard + manual SC#1-5 hardware record
 **UI hint**: yes
 
 ## Progress
@@ -96,4 +96,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Foundation | 2/2 | Complete   | 2026-06-01 |
 | 2. Core Pipeline | 3/3 | Complete   | 2026-06-01 |
 | 3. Resilience | 3/3 | Complete   | 2026-06-02 |
-| 4. Tray & Autostart | 3/4 | In Progress|  |
+| 4. Tray & Autostart | 4/4 | Complete   | 2026-06-02 |
