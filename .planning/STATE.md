@@ -94,8 +94,8 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-02 — v1.0 milestone completed and archived
-Stopped at: v1.0 milestone complete
+Last session: 2026-06-02 — v1.0 milestone summary generated (.planning/reports/MILESTONE_SUMMARY-v1.0.md)
+Stopped at: v1.0 milestone complete + onboarding summary written
 Resume file: — (no in-flight phase; start v1.1 with /gsd-new-milestone)
 
 ## Operator Next Steps
