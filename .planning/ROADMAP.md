@@ -82,7 +82,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 4 plans
   - [x] 04-01-PLAN.md — TDD: logo.h → RGBA + RGB565→888 + per-state corner-bubble icon (icon_assets)
   - [x] 04-02-PLAN.md — TDD: winreg HKCU\\Run autostart toggle (enable/disable/is_enabled, pythonw)
-  - [ ] 04-03-PLAN.md — Tray runtime: pystray icon/menu/Quit + Error toast + additive TrayState daemon wiring
+  - [x] 04-03-PLAN.md — Tray runtime: pystray icon/menu/Quit + Error toast + additive TrayState daemon wiring
   - [ ] 04-04-PLAN.md — install-windows.ps1 + README + no-WSL static guard + manual SC#1-5 hardware record
 **UI hint**: yes
 
@@ -96,4 +96,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Foundation | 2/2 | Complete   | 2026-06-01 |
 | 2. Core Pipeline | 3/3 | Complete   | 2026-06-01 |
 | 3. Resilience | 3/3 | Complete   | 2026-06-02 |
-| 4. Tray & Autostart | 2/4 | In Progress|  |
+| 4. Tray & Autostart | 3/4 | In Progress|  |
