@@ -1,11 +1,20 @@
 ---
-status: gaps
+status: passed
 phase: 03-resilience
 source: [03-03-PLAN.md]
 verified: 2026-06-02
 operator: kevin.venanzi@gmail.com
 hardware: native Windows (Python 3.13, .venv, files over \\wsl.localhost mount)
 ---
+
+> **Update (2026-06-02, after gap fix):** SC#3 and SC#4 were RE-VERIFIED on hardware
+> and now PASS. Gap G-03-01 was closed by widening the `except` in
+> `Session.setup_refresh_subscription()` to catch `OSError` (commits
+> `b58c190` RED test, `f303eb4` GREEN fix). On the re-run, the post-power-cycle
+> reconnect logged `Refresh subscription unavailable: ...` (graceful degradation),
+> landed a fresh `Sending:`, and the daemon stayed a single continuous process
+> (no restart). The per-scenario sections below retain the original failure
+> account for the record; the Summary reflects the final all-pass state.
 
 ## Windows Hardware Verification — Phase 3: Resilience
 
@@ -72,7 +81,8 @@ auto-reconnected with no user action when the device returned to range.
 **Expected behavior:** Powering the Clawdmeter off and on, the daemon picks it up on the
 next scan cycle (`Found:` → `Connected` → `Sending:`) without a restart.
 
-**Operator-reported result:** FAIL. The daemon correctly detected the dropped link
+**Operator-reported result:** FAIL on first run → **PASS after gap fix (re-verified
+2026-06-02).** First run: the daemon correctly detected the dropped link
 (D-03 zombie-break fired at 19:56:44), re-scanned, found the device, and reconnected
 (`Connected` at 19:56:51) — but then **crashed** during post-connect setup. The freshly
 power-cycled device's GATT server was not yet ready for the CCCD descriptor write that
@@ -90,6 +100,12 @@ is to catch the failure and degrade gracefully, as the existing `except` already
 `BleakError`. This path was outside the D-01/D-03 hardening (D-01 wraps `connect()`; D-03 wraps
 the write loop; the `start_notify()` between them was left with a too-narrow `except`).
 
+**Resolution (re-verified PASS):** `except (BleakError, ValueError)` → `except
+(BleakError, ValueError, OSError)` in `setup_refresh_subscription()`. On the hardware
+re-run, the power-cycled device reconnected, logged `Refresh subscription unavailable`
+(the optional subscription degraded gracefully), and a fresh `Sending:` landed on the
+next poll — daemon never crashed.
+
 ---
 
 ### SC#4 — single continuous run (no restart)
@@ -97,10 +113,10 @@ the write loop; the `start_notify()` between them was left with a too-narrow `ex
 **Expected behavior:** The SAME daemon process recovers from all three scenarios without
 a restart (one continuous PID).
 
-**Operator-reported result:** FAIL (consequential). SC#1 and SC#2 were survived by a single
-continuous process, but the SC#3 crash terminated that process — a restart would be required
-to continue. Because the no-restart guarantee is the core promise of the phase, the SC#3
-crash also fails SC#4.
+**Operator-reported result:** FAIL on first run → **PASS after gap fix (re-verified
+2026-06-02).** First run: SC#1 and SC#2 were survived by a single continuous process,
+but the SC#3 crash terminated it. After the G-03-01 fix, the daemon survived all three
+scenarios as a single continuous process (same PID, no restart) — SC#4 attested PASS.
 
 ---
 
@@ -108,19 +124,18 @@ crash also fails SC#4.
 
 ```
 total:   4
-passed:  2  (SC#1 sleep/wake, SC#2 out-of-range)
+passed:  4  (SC#1, SC#2 first run; SC#3, SC#4 after G-03-01 fix, re-verified 2026-06-02)
 issues:  0
-gaps:    1  (single root-cause defect failing SC#3 + SC#4)
+gaps:    0  (G-03-01 closed and re-verified on hardware)
 ```
 
-**Gap G-03-01 — uncaught `OSError` from `start_notify()` crashes the daemon on
-post-power-cycle reconnect.** `setup_refresh_subscription()` must tolerate a WinRT
-`OSError`/`WinError` (in addition to `BleakError`/`ValueError`) and degrade gracefully —
-log "Refresh subscription unavailable" and continue into the poll loop — so a transient
-not-ready GATT server on a just-rebooted device cannot kill the process. Recommended:
-widen the `except` in `Session.setup_refresh_subscription()` to include `OSError`, add a
-regression test (mock `start_notify` raising `OSError`, assert `connect_and_run` does not
-propagate it and proceeds to the poll loop), then re-run SC#3 + SC#4 on hardware.
+**Gap G-03-01 (CLOSED) — uncaught `OSError` from `start_notify()` crashed the daemon on
+post-power-cycle reconnect.** Fixed by widening the `except` in
+`Session.setup_refresh_subscription()` to include `OSError` so a transient not-ready GATT
+server on a just-rebooted device degrades gracefully (logs "Refresh subscription
+unavailable", continues into the 60s poll loop) instead of killing the process. Guarded by
+regression test `test_start_notify_oserror_does_not_crash_connect_and_run`
+(RED `b58c190` → GREEN `f303eb4`). Re-verified PASS on hardware 2026-06-02.
 
 ## Notes
 
