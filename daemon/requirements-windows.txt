@@ -2,3 +2,5 @@
 # The macOS/Linux daemons manage their own dependencies separately.
 bleak
 httpx
+pystray
+Pillow
