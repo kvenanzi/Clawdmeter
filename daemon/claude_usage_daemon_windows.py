@@ -15,6 +15,7 @@ import os
 import re
 import signal
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -273,6 +274,24 @@ def read_token() -> str | None:
     return None
 
 
+def _parse_expiry_ms(full_obj: dict) -> int | None:
+    """Return claudeAiOauth.expiresAt as int epoch milliseconds, or None.
+
+    Accepts the full credential object ({"claudeAiOauth": {...}}).
+    Returns None if absent, non-numeric, or the claudeAiOauth key is missing.
+    Factored out of _read_expiry so callers needing the raw ms value (proactive
+    refresh check, write-back) share a single parser.
+    """
+    try:
+        oauth = full_obj.get("claudeAiOauth", {})
+        val = oauth.get("expiresAt")
+        if val is None:
+            return None
+        return int(val)
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 def _read_expiry() -> str:
     """Return human-readable expiry from the first-hit credentials file.
 
@@ -287,8 +306,7 @@ def _read_expiry() -> str:
             continue
         try:
             data = json.loads(raw)
-            oauth = data.get("claudeAiOauth", {})
-            expires_ms = oauth.get("expiresAt")
+            expires_ms = _parse_expiry_ms(data)
             if expires_ms is None:
                 return "expiry unknown"
             # CRITICAL: expiresAt is JS-convention epoch milliseconds; divide by 1000
@@ -300,6 +318,55 @@ def _read_expiry() -> str:
         except (TypeError, ValueError, OSError, AttributeError, json.JSONDecodeError):
             return "expiry unknown"
     return "expiry unknown"
+
+
+def _read_full_credentials() -> dict | None:
+    """Return the full parsed credential object from the first-hit candidate path.
+
+    Reuses _windows_credential_candidates() for path resolution. Returns the
+    WHOLE top-level dict so callers can mutate claudeAiOauth and re-dump all
+    keys (subscriptionType, rateLimitTier, etc.) untouched.
+    Returns None if no file is found or the file is not parseable JSON.
+    """
+    for path in _windows_credential_candidates():
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return None
+
+
+def _atomic_write_credentials(path: Path, full_obj: dict) -> None:
+    """Write full_obj to path atomically using same-directory tempfile + os.replace.
+
+    Recipe:
+    - mkstemp in the SAME directory (required for os.replace to be a same-volume rename)
+    - json.dump with indent=2 (matches Claude Code formatting)
+    - f.flush() + os.fsync() before close (durability)
+    - os.replace(tmp, path) — atomic on both POSIX and Windows; overwrites existing target
+    - On any exception: unlink the temp file and re-raise (no half-written creds)
+
+    Never logs token values — only logs a success message with the path.
+    """
+    d = path.parent
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".cred-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(full_obj, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        log(f"Credentials written to {path.name} (atomic replace)")
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 async def _wait_first(*events: asyncio.Event, timeout: float) -> None:
