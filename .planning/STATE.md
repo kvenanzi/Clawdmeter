@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-02)
 Phase: Milestone v1.0 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-06-02 — Milestone v1.0 completed and archived
+Last activity: 2026-06-07 — Completed quick task 260607-mah: OAuth token auto-refresh for Windows daemon
 
 ## Performance Metrics
 
@@ -84,6 +84,12 @@ Recent decisions affecting current work:
 ### Blockers/Concerns
 
 - None open. (Phase 1 gate-check resolved the GATT-encryption concern: characteristics are unencrypted, no pairing needed.)
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Status | Directory |
+|---|-------------|------|--------|--------|-----------|
+| 260607-mah | Auto-refresh expired Claude OAuth token via refresh_token so the Windows daemon stops demanding `claude login` after sleep/power-off | 2026-06-07 | 365220d | Verified | [260607-mah-auto-refresh-expired-claude-oauth-token-](./quick/260607-mah-auto-refresh-expired-claude-oauth-token-/) |
 
 ## Deferred Items
 
