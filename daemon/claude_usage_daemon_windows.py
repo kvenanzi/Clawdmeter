@@ -329,6 +329,29 @@ def _read_expiry() -> str:
     return "expiry unknown"
 
 
+def _read_full_credentials_with_path() -> tuple[dict | None, Path | None]:
+    """Like _read_full_credentials but also returns the path actually read.
+
+    Threading the resolved path out lets a refresh write back to the SAME file
+    it read, closing the TOCTOU window where a second candidate scan could pick
+    a different path if files shift between read and write (WR-03).
+
+    Returns (full_obj, path) on success, (None, None) if no file is found, and
+    (None, path) if the found file is not parseable JSON (so callers can still
+    report which file was bad).
+    """
+    for path in _windows_credential_candidates():
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        try:
+            return json.loads(raw), path
+        except (json.JSONDecodeError, ValueError):
+            return None, path
+    return None, None
+
+
 def _read_full_credentials() -> dict | None:
     """Return the full parsed credential object from the first-hit candidate path.
 
@@ -337,16 +360,8 @@ def _read_full_credentials() -> dict | None:
     keys (subscriptionType, rateLimitTier, etc.) untouched.
     Returns None if no file is found or the file is not parseable JSON.
     """
-    for path in _windows_credential_candidates():
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return None
-    return None
+    obj, _ = _read_full_credentials_with_path()
+    return obj
 
 
 def _atomic_write_credentials(path: Path, full_obj: dict) -> None:
@@ -470,8 +485,9 @@ async def get_valid_token(tray_state=None) -> str | None:
 
     # Step 3: RE-READ disk before spending the refresh token (race-condition mitigation:
     # Claude Code may have just written a fresh token; single-use refresh tokens mean we
-    # must not use a cached possibly-already-rotated refresh token).
-    full_obj = _read_full_credentials()
+    # must not use a cached possibly-already-rotated refresh token). Capture the resolved
+    # path so the write-back below targets the exact file we read (WR-03 — no second scan).
+    full_obj, creds_path = _read_full_credentials_with_path()
     if full_obj is None:
         log("get_valid_token: credentials vanished on re-read")
         return None
@@ -501,6 +517,13 @@ async def get_valid_token(tray_state=None) -> str | None:
 
     # Successful 200 response — build updated credential object
     new_access_token = refresh_result.get("access_token", "")
+    if not new_access_token:
+        # 200 but no usable access_token. Treat as TRANSIENT (no toast) and do NOT
+        # write back — writing an empty token would burn the single-use refresh
+        # token and trip the proactive check every tick, spinning a refresh loop
+        # against a misbehaving server (WR-01).
+        log("get_valid_token: refresh 200 but empty access_token; treating as transient, not writing back")
+        return None
     new_refresh_token = refresh_result.get("refresh_token", stored_refresh_token)  # reuse old if absent
     expires_in_secs = refresh_result.get("expires_in", 0)
     new_expires_ms = int(time.time() * 1000) + expires_in_secs * 1000
@@ -517,17 +540,14 @@ async def get_valid_token(tray_state=None) -> str | None:
 
     full_obj["claudeAiOauth"] = oauth
 
-    # Find the path that was actually read (first-hit candidate)
-    creds_path = None
-    for path in _windows_credential_candidates():
-        if path.exists():
-            creds_path = path
-            break
-
+    # Write back to the EXACT path resolved during the race re-read above (WR-03) —
+    # no second candidate scan, so a file shift between read and write can't make us
+    # update the wrong file.
     if creds_path is not None:
         _atomic_write_credentials(creds_path, full_obj)
-        import datetime as _dt
-        expiry_dt = _dt.datetime.fromtimestamp(new_expires_ms / 1000, tz=_dt.timezone.utc)
+        expiry_dt = datetime.datetime.fromtimestamp(
+            new_expires_ms / 1000, tz=datetime.timezone.utc
+        )
         log(f"get_valid_token: refreshed, new expiry {expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}")
     else:
         log("get_valid_token: refreshed but could not find creds path to write back")
@@ -662,13 +682,21 @@ async def connect_and_run(device, stop_event: asyncio.Event, tray_state=None) ->
                 # Proactive refresh: get_valid_token() returns a fresh token (possibly
                 # refreshing before the poll if near expiry), or None on transient
                 # failure (which must NOT toast — same as a transient poll failure).
-                token = await get_valid_token(tray_state)  # D-09: fresh each cycle, with refresh
+                # A genuine refresh rejection raises AuthError — catch it here, toast,
+                # and keep the loop alive. Letting it propagate would kill the daemon
+                # thread (no handler exists above), the silent-freeze failure mode (CR-01).
+                try:
+                    token = await get_valid_token(tray_state)  # D-09: fresh each cycle, with refresh
+                except AuthError:
+                    log("Proactive refresh failed genuinely; firing 'run claude login' toast")
+                    if tray_state:
+                        tray_state.set_error("token expired — run claude login")
+                    token = None
                 if not token:
                     log("No token; skipping poll")
                     # Do NOT toast for a transient get_valid_token None — a missing
                     # file or transient refresh failure should not show "run claude login".
-                    # Only a genuine AuthError (from _refresh_oauth_token inside
-                    # get_valid_token) propagates up and is NOT caught here (by design).
+                    # (A genuine AuthError was already handled + toasted just above.)
                 else:
                     # _poll_with_refresh handles: first poll OK -> payload; poll 401 ->
                     # forced refresh + retry; retry OK -> payload; forced refresh genuine

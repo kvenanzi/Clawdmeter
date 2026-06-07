@@ -713,3 +713,130 @@ class TestPollWithRefresh:
 
         assert result == good_payload
         get_valid_token_mock.assert_not_called()
+
+
+# ===========================================================================
+# CODE-REVIEW FIX REGRESSIONS (260607-mah REVIEW.md: CR-01, WR-01, IN-01, IN-02)
+# ===========================================================================
+
+class TestReviewFixRegressions:
+    """Regression guards for the issues found by code review on the OAuth refresh feature."""
+
+    def test_cr01_proactive_autherror_does_not_crash_and_toasts(self):
+        """CR-01: a genuine AuthError from the PROACTIVE get_valid_token inside
+        connect_and_run must be caught — it toasts and the function returns
+        normally instead of letting AuthError kill the daemon thread."""
+        from daemon.claude_usage_daemon_windows import connect_and_run
+
+        stop_event = asyncio.Event()
+
+        # get_valid_token (proactive) raises AuthError; set stop so the loop exits
+        # immediately after the except block (no TICK wait).
+        def _raise_after_stopping(*_a, **_k):
+            stop_event.set()
+            raise AuthError("genuine refresh rejection")
+
+        get_valid_token_mock = AsyncMock(side_effect=_raise_after_stopping)
+
+        # Mock a successfully-connected BLE client.
+        mock_client = AsyncMock()
+        mock_client.is_connected = True
+        mock_client.connect = AsyncMock()
+        mock_client.disconnect = AsyncMock()
+        mock_client.start_notify = AsyncMock()
+
+        device = MagicMock()
+        device.address = "AA:BB:CC:DD:EE:FF"
+
+        tray_state = MagicMock()
+        tray_state.set_error = MagicMock()
+
+        with patch("daemon.claude_usage_daemon_windows.BleakClient", return_value=mock_client), \
+             patch("daemon.claude_usage_daemon_windows.get_valid_token", get_valid_token_mock):
+            # Must NOT raise AuthError — that would crash the daemon (CR-01).
+            result = _run(connect_and_run(device, stop_event, tray_state))
+
+        assert result is False  # no successful write occurred
+        tray_state.set_error.assert_called_once()
+        assert "claude login" in tray_state.set_error.call_args[0][0]
+
+    def test_wr01_empty_access_token_in_200_is_transient_and_no_writeback(self, tmp_path, monkeypatch):
+        """WR-01: a 200 response with an empty/absent access_token must be treated
+        as transient (return None) and must NOT write back — writing an empty token
+        would burn the single-use refresh token and spin a refresh loop."""
+        from daemon.claude_usage_daemon_windows import get_valid_token
+        near_expiry_ms = int(time.time() * 1000) + 60 * 1000  # near expiry -> would refresh
+        creds = _make_oauth_creds_file(tmp_path, "sk-ant-old", "sk-ant-ort-PRECIOUS", near_expiry_ms)
+        monkeypatch.setenv("CLAUDE_CREDENTIALS_PATH", str(creds))
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+        # 200 but NO access_token field
+        mock_client = _make_mock_http_client(200, {"refresh_token": "sk-ant-ort-rotated", "expires_in": 28800})
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = _run(get_valid_token())
+        assert result is None, "empty access_token must be treated as transient (None)"
+        # The on-disk credentials must be UNCHANGED — refresh token not burned.
+        written = json.loads(creds.read_text(encoding="utf-8"))
+        assert written["claudeAiOauth"]["accessToken"] == "sk-ant-old"
+        assert written["claudeAiOauth"]["refreshToken"] == "sk-ant-ort-PRECIOUS"
+
+    def test_in01_race_reread_fresh_on_disk_skips_network(self, tmp_path, monkeypatch):
+        """IN-01: if the FIRST read is stale but the race RE-READ finds a fresh
+        token (Claude Code refreshed concurrently), get_valid_token returns the
+        on-disk token and never spends the (possibly already-rotated) refresh token."""
+        import daemon.claude_usage_daemon_windows as mod
+        from daemon.claude_usage_daemon_windows import get_valid_token
+
+        stale_ms = int(time.time() * 1000) + 60 * 1000           # within 5-min window -> "stale"
+        fresh_ms = int(time.time() * 1000) + 9999999 * 1000       # far future -> "fresh"
+        stale_obj = {"claudeAiOauth": {"accessToken": "sk-ant-stale", "refreshToken": "sk-ant-ort", "expiresAt": stale_ms}}
+        fresh_obj = {"claudeAiOauth": {"accessToken": "sk-ant-CONCURRENT-FRESH", "refreshToken": "sk-ant-ort", "expiresAt": fresh_ms}}
+
+        # Step 1 reads stale; the race re-read (with_path) returns the fresh on-disk token.
+        first_read = MagicMock(return_value=stale_obj)
+        race_read = MagicMock(return_value=(fresh_obj, tmp_path / ".credentials.json"))
+
+        post_mock = AsyncMock()
+        net_client = AsyncMock()
+        net_client.__aenter__ = AsyncMock(return_value=net_client)
+        net_client.__aexit__ = AsyncMock(return_value=False)
+        net_client.post = post_mock
+
+        with patch.object(mod, "_read_full_credentials", first_read), \
+             patch.object(mod, "_read_full_credentials_with_path", race_read), \
+             patch("httpx.AsyncClient", return_value=net_client):
+            result = _run(get_valid_token())
+
+        assert result == "sk-ant-CONCURRENT-FRESH"
+        post_mock.assert_not_called()  # no network refresh — refresh token preserved
+
+    def test_in02_404_on_primary_falls_back_to_secondary(self):
+        """IN-02: a 404 on the primary OAuth URL escalates to the fallback URL."""
+        from daemon.claude_usage_daemon_windows import (
+            OAUTH_TOKEN_URL,
+            OAUTH_FALLBACK_URL,
+            _refresh_oauth_token,
+        )
+        resp404 = MagicMock()
+        resp404.status_code = 404
+        resp404.json = MagicMock(return_value={})
+        resp404.text = "not found"
+        resp200 = MagicMock()
+        resp200.status_code = 200
+        resp200.json = MagicMock(return_value={"access_token": "sk-ant-fallback", "expires_in": 28800})
+        resp200.text = "ok"
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(side_effect=[resp404, resp200])
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = _run(_refresh_oauth_token("sk-ant-ort-old"))
+
+        assert result["access_token"] == "sk-ant-fallback"
+        assert mock_client.post.call_count == 2
+        # First attempt hit the primary URL, second hit the fallback.
+        first_url = mock_client.post.call_args_list[0][0][0]
+        second_url = mock_client.post.call_args_list[1][0][0]
+        assert first_url == OAUTH_TOKEN_URL
+        assert second_url == OAUTH_FALLBACK_URL
