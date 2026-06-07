@@ -53,6 +53,15 @@ API_BODY = {
     "messages": [{"role": "user", "content": "hi"}],
 }
 
+# OAuth token refresh — VERIFIED values from RESEARCH.md
+# Primary: platform.claude.com (current preferred host); fallback: console.anthropic.com (proven working)
+OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+OAUTH_FALLBACK_URL = "https://console.anthropic.com/v1/oauth/token"
+OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+# Proactive refresh window: refresh if token expires within this many seconds
+OAUTH_PROACTIVE_REFRESH_SECS = 5 * 60  # 5 minutes
+
 
 def _build_file_logger() -> logging.Logger | None:
     """Create a rotating file logger for field diagnostics, or None.
@@ -367,6 +376,163 @@ def _atomic_write_credentials(path: Path, full_obj: dict) -> None:
         except OSError:
             pass
         raise
+
+
+async def _refresh_oauth_token(refresh_token: str) -> dict | None:
+    """POST the refreshToken to the OAuth endpoint and return the parsed response dict.
+
+    Tries OAUTH_TOKEN_URL (platform.claude.com) first. On a connection error or a
+    non-OAuth 404, falls back to OAUTH_FALLBACK_URL (console.anthropic.com).
+
+    Returns:
+      dict  — parsed 200 response body (access_token, refresh_token?, expires_in, scope?)
+      None  — transient/network failure (5xx, timeout, unexpected status) — caller treats as None (no toast)
+
+    Raises:
+      AuthError — genuine auth failure (400/401/403 from the token endpoint)
+
+    Never logs raw token values — logs only lengths or human-readable expiry.
+    """
+    body = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": OAUTH_CLIENT_ID,
+    }
+    urls_to_try = [OAUTH_TOKEN_URL, OAUTH_FALLBACK_URL]
+    for i, url in enumerate(urls_to_try):
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as http:
+                resp = await http.post(url, json=body)
+        except httpx.HTTPError as e:
+            if i < len(urls_to_try) - 1:
+                log(f"OAuth refresh: connection error on {url}, trying fallback: {e}")
+                continue
+            log(f"OAuth refresh: transient network error: {type(e).__name__}")
+            return None
+
+        if resp.status_code == 200:
+            return resp.json()
+
+        if resp.status_code in (400, 401, 403):
+            # Genuine auth failure — refresh token is revoked/expired/invalid.
+            # Gate purely on status code; parse body only for redacted logging.
+            try:
+                err_body = resp.json()
+                err_code = err_body.get("error", "unknown")
+            except Exception:
+                err_code = "unknown"
+            log(f"OAuth refresh: genuine auth failure {resp.status_code} ({err_code})")
+            raise AuthError(f"OAuth refresh failed: {resp.status_code} {err_code}")
+
+        # 404 on primary might mean wrong host — try fallback once
+        if resp.status_code == 404 and i < len(urls_to_try) - 1:
+            log(f"OAuth refresh: 404 on {url}, trying fallback")
+            continue
+
+        # 5xx or other — transient
+        log(f"OAuth refresh: transient HTTP {resp.status_code}")
+        return None
+
+    # Exhausted all URLs without success (should not normally reach here)
+    return None
+
+
+async def get_valid_token(tray_state=None) -> str | None:
+    """Return a valid access token, refreshing proactively if near expiry.
+
+    Flow:
+    1. Read full credentials from disk.
+    2. If accessToken present AND expiresAt > now + ~5 min: return immediately (no network).
+    3. RE-READ disk (race rule: Claude Code may have refreshed concurrently). Re-check expiry.
+       Still stale -> call _refresh_oauth_token with the on-disk refreshToken.
+    4. On 200: build new claudeAiOauth, _atomic_write_credentials the FULL object, return new token.
+    5. On AuthError from refresh: propagate (genuine — caller toasts "run claude login").
+    6. On transient (None from refresh): return None (no toast, next tick retries).
+
+    Never logs raw token values.
+    """
+    now_ms = int(time.time() * 1000)
+    threshold_ms = now_ms + OAUTH_PROACTIVE_REFRESH_SECS * 1000
+
+    # Step 1: read full credentials
+    full_obj = _read_full_credentials()
+    if full_obj is None:
+        log("get_valid_token: no credentials found")
+        return None
+
+    oauth = full_obj.get("claudeAiOauth", {})
+    access_token = oauth.get("accessToken", "")
+    expires_ms = _parse_expiry_ms(full_obj)
+
+    # Step 2: token is present and not near expiry — return immediately
+    if access_token and expires_ms is not None and expires_ms > threshold_ms:
+        return access_token
+
+    # Step 3: RE-READ disk before spending the refresh token (race-condition mitigation:
+    # Claude Code may have just written a fresh token; single-use refresh tokens mean we
+    # must not use a cached possibly-already-rotated refresh token).
+    full_obj = _read_full_credentials()
+    if full_obj is None:
+        log("get_valid_token: credentials vanished on re-read")
+        return None
+
+    oauth = full_obj.get("claudeAiOauth", {})
+    access_token = oauth.get("accessToken", "")
+    expires_ms = _parse_expiry_ms(full_obj)
+
+    if access_token and expires_ms is not None and expires_ms > threshold_ms:
+        # Fresh token appeared on disk (Claude Code refreshed concurrently) — use it
+        log("get_valid_token: on-disk token already fresh after re-read, skipping network refresh")
+        return access_token
+
+    stored_refresh_token = oauth.get("refreshToken", "")
+    if not stored_refresh_token:
+        log("get_valid_token: no refreshToken on disk, cannot refresh")
+        return None
+
+    log(f"get_valid_token: token near expiry or expired, refreshing (len={len(stored_refresh_token)})")
+
+    # Step 4/5/6: call the OAuth endpoint
+    refresh_result = await _refresh_oauth_token(stored_refresh_token)
+    if refresh_result is None:
+        # Transient failure — no toast
+        log("get_valid_token: transient refresh failure, will retry next tick")
+        return None
+
+    # Successful 200 response — build updated credential object
+    new_access_token = refresh_result.get("access_token", "")
+    new_refresh_token = refresh_result.get("refresh_token", stored_refresh_token)  # reuse old if absent
+    expires_in_secs = refresh_result.get("expires_in", 0)
+    new_expires_ms = int(time.time() * 1000) + expires_in_secs * 1000
+
+    # Mutate only the token-related keys; all other keys (subscriptionType, rateLimitTier, etc.) preserved
+    oauth["accessToken"] = new_access_token
+    oauth["refreshToken"] = new_refresh_token
+    oauth["expiresAt"] = new_expires_ms
+
+    # Update scopes array only if the response included the scope field
+    scope_str = refresh_result.get("scope")
+    if scope_str:
+        oauth["scopes"] = scope_str.split()
+
+    full_obj["claudeAiOauth"] = oauth
+
+    # Find the path that was actually read (first-hit candidate)
+    creds_path = None
+    for path in _windows_credential_candidates():
+        if path.exists():
+            creds_path = path
+            break
+
+    if creds_path is not None:
+        _atomic_write_credentials(creds_path, full_obj)
+        import datetime as _dt
+        expiry_dt = _dt.datetime.fromtimestamp(new_expires_ms / 1000, tz=_dt.timezone.utc)
+        log(f"get_valid_token: refreshed, new expiry {expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}")
+    else:
+        log("get_valid_token: refreshed but could not find creds path to write back")
+
+    return new_access_token
 
 
 async def _wait_first(*events: asyncio.Event, timeout: float) -> None:
