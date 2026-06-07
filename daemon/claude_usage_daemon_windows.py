@@ -535,6 +535,53 @@ async def get_valid_token(tray_state=None) -> str | None:
     return new_access_token
 
 
+async def _poll_with_refresh(token: str, tray_state=None) -> dict | None:
+    """Call poll_api(token); on AuthError, attempt ONE forced refresh + ONE retry.
+
+    Extracted from connect_and_run to keep the reactive-retry logic unit-testable
+    without driving the full BLE session loop.
+
+    Returns:
+      dict  — payload from poll_api (first try or after successful forced refresh)
+      None  — any failure path that should NOT toast (transient poll, transient refresh)
+
+    Side effects (toast "token expired — run claude login"):
+      ONLY when the forced refresh itself raises AuthError (genuine invalid token).
+
+    AuthError from poll_api is NOT re-raised — it is caught here and triggers the
+    forced refresh + retry.  The caller receives None or payload, never AuthError.
+    """
+    try:
+        return await poll_api(token)
+    except AuthError:
+        # Unexpected poll 401/403 — one forced refresh + one retry before toasting.
+        log("poll_api returned 401/403; attempting forced token refresh before toasting")
+
+    try:
+        new_token = await get_valid_token(tray_state)
+    except AuthError:
+        # Forced refresh also failed genuinely — NOW toast.
+        log("Forced refresh also failed (genuine); firing 'run claude login' toast")
+        if tray_state:
+            tray_state.set_error("token expired — run claude login")
+        return None
+
+    if new_token is None:
+        # Transient refresh failure — no toast, next tick retries.
+        log("Forced refresh returned None (transient); leaving tray unchanged")
+        return None
+
+    # Retry poll once with the fresh token
+    try:
+        return await poll_api(new_token)
+    except AuthError:
+        # Retry also rejected — now toast.
+        log("Retry poll also returned 401/403; firing 'run claude login' toast")
+        if tray_state:
+            tray_state.set_error("token expired — run claude login")
+        return None
+
+
 async def _wait_first(*events: asyncio.Event, timeout: float) -> None:
     """Return when any of `events` is set, or after `timeout` seconds.
 
@@ -612,19 +659,21 @@ async def connect_and_run(device, stop_event: asyncio.Event, tray_state=None) ->
             elapsed = now - last_poll
             if session.refresh_requested.is_set() or elapsed >= POLL_INTERVAL:
                 session.refresh_requested.clear()
-                token = read_token()  # D-09: fresh each cycle
+                # Proactive refresh: get_valid_token() returns a fresh token (possibly
+                # refreshing before the poll if near expiry), or None on transient
+                # failure (which must NOT toast — same as a transient poll failure).
+                token = await get_valid_token(tray_state)  # D-09: fresh each cycle, with refresh
                 if not token:
                     log("No token; skipping poll")
-                    if tray_state:
-                        tray_state.set_error("token expired — run claude login")
+                    # Do NOT toast for a transient get_valid_token None — a missing
+                    # file or transient refresh failure should not show "run claude login".
+                    # Only a genuine AuthError (from _refresh_oauth_token inside
+                    # get_valid_token) propagates up and is NOT caught here (by design).
                 else:
-                    try:
-                        payload = await poll_api(token)
-                    except AuthError:
-                        # Real 401/403 — token genuinely needs a refresh.
-                        if tray_state:
-                            tray_state.set_error("token expired — run claude login")
-                        payload = None
+                    # _poll_with_refresh handles: first poll OK -> payload; poll 401 ->
+                    # forced refresh + retry; retry OK -> payload; forced refresh genuine
+                    # AuthError -> toast + None; transient -> None (no toast).
+                    payload = await _poll_with_refresh(token, tray_state)
                     if payload is not None:
                         if await session.write_payload(payload):
                             last_poll = time.time()

@@ -27,7 +27,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 def _run(coro):
     """Run a coroutine synchronously for synchronous test functions."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def test_extract_nested_shape():
