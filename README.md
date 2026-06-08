@@ -2,8 +2,11 @@
 
 > **Windows fork** of [Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter).
 > Adds a native Windows host daemon (BLE over WinRT) with a **system-tray app**,
-> login autostart, and auto-reconnect, so the device stays connected on Windows
-> without depending on WSL. See [daemon/README-windows.md](daemon/README-windows.md).
+> login autostart, auto-reconnect, and **automatic Claude OAuth token refresh** —
+> the daemon renews the access token from the stored refresh token, so you no
+> longer have to re-run `claude login` after the PC sleeps or restarts. The
+> device stays connected on Windows without depending on WSL.
+> See [daemon/README-windows.md](daemon/README-windows.md).
 
 A small ESP32 dashboard I made for my desk to keep an eye on Claude Code usage.
 
@@ -184,13 +187,13 @@ reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Clawdmeter /f
 | Symptom | Fix |
 |---------|-----|
 | `Device not found` | Power on the device; make sure it's in range and paired. |
-| `token expired` toast / `API HTTP 401` | Re-run `claude login`, then restart the daemon. |
+| `token expired` toast / `API HTTP 401` | The daemon now auto-refreshes the token, so this should be rare — it only appears if the **refresh token itself** is revoked (e.g. you logged out or it was rotated elsewhere). Re-run `claude login`, then restart the daemon. |
 | `Connection failed` | Toggle Windows Bluetooth off/on in Settings. |
 | `Warning: running under Linux/WSL` | Run from a native PowerShell window, not a WSL shell. |
 
 ## How it works
 
-1. The daemon reads your Claude Code OAuth token — from the macOS Keychain (service `Claude Code-credentials`) on macOS, or from `~/.claude/.credentials.json` on Linux (`%USERPROFILE%\.claude\.credentials.json` on Windows).
+1. The daemon reads your Claude Code OAuth token — from the macOS Keychain (service `Claude Code-credentials`) on macOS, or from `~/.claude/.credentials.json` on Linux (`%USERPROFILE%\.claude\.credentials.json` on Windows). On Windows, if the access token is expired or within ~5 minutes of expiry, the daemon refreshes it using the stored refresh token and writes the new token back to `.credentials.json` atomically — so it keeps working across sleep/restart without a manual `claude login`, and native Claude Code stays signed in too.
 2. It makes a minimal API call to `api.anthropic.com/v1/messages` — one token of Haiku, basically free.
 3. The usage numbers come straight out of the response headers (`anthropic-ratelimit-unified-5h-utilization` and friends).
 4. The daemon connects to the ESP32 over BLE and writes a JSON payload to the GATT RX characteristic.
