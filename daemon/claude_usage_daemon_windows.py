@@ -22,9 +22,10 @@ from pathlib import Path
 
 import httpx
 from bleak import BleakClient, BleakScanner
+from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 
-DEVICE_NAME = "Claude Controller"
+DEVICE_NAME = "Clawdmeter"
 SERVICE_UUID = "4c41555a-4465-7669-6365-000000000001"
 RX_CHAR_UUID = "4c41555a-4465-7669-6365-000000000002"
 REQ_CHAR_UUID = "4c41555a-4465-7669-6365-000000000004"
@@ -166,9 +167,88 @@ async def poll_api(token: str) -> dict | None:
     return payload
 
 
+def _ble_addr_str(addr_int: int) -> str:
+    """Format a 48-bit WinRT Bluetooth address int as a colon-separated MAC."""
+    return ":".join(f"{(addr_int >> (8 * i)) & 0xFF:02X}" for i in reversed(range(6)))
+
+
+async def retrieve_connected_winrt():
+    """Return a BLEDevice for a system-connected Clawdmeter, or None.
+
+    The firmware pairs as a HID keyboard, so the device is bonded/connected to
+    Windows — and WinRT's BLE scanner does NOT report bonded/connected devices.
+    BleakScanner therefore can NEVER see it (the daemon's old scan-only flow sat
+    on "Scanning" forever). Mirror the macOS retrieve_connected path: enumerate
+    the OS-connected BLE peripherals and pick ours by the custom SERVICE_UUID.
+
+    Matching on the service UUID (not the name) is deliberate — it is
+    unambiguous, needs no hardcoded address, and survives the historical
+    'Claude Controller' -> 'Clawdmeter' device-name rename.
+
+    winrt is Windows-only; import lazily so this module still imports on Linux
+    (CI and the WSL source-of-truth checkout), where those namespaces are absent
+    — exactly how the macOS path imports CoreBluetooth inside the function.
+    """
+    try:
+        from winrt.windows.devices.bluetooth import (
+            BluetoothConnectionStatus,
+            BluetoothLEDevice,
+        )
+        from winrt.windows.devices.enumeration import DeviceInformation
+    except ImportError as e:
+        log(f"WinRT unavailable, skipping connected-device lookup: {e}")
+        return None
+
+    try:
+        selector = BluetoothLEDevice.get_device_selector_from_connection_status(
+            BluetoothConnectionStatus.CONNECTED
+        )
+        infos = await DeviceInformation.find_all_async_aqs_filter(selector)
+    except Exception as e:  # WinRT projection / enumeration failure
+        log(f"Connected-device enumeration failed: {type(e).__name__}: {e}")
+        return None
+
+    for info in infos:
+        try:
+            dev = await BluetoothLEDevice.from_id_async(info.id)
+            if dev is None:
+                continue
+            result = await dev.get_gatt_services_async()
+            if result.status != 0:  # GattCommunicationStatus.SUCCESS == 0
+                continue
+            if any(str(s.uuid).lower() == SERVICE_UUID.lower()
+                   for s in result.services):
+                addr = _ble_addr_str(dev.bluetooth_address)
+                log(f"Found system-connected device: {dev.name!r} [{addr}]")
+                # details=None is fine: passing a BLEDevice makes BleakClient skip
+                # its internal address scan and connect straight via
+                # from_bluetooth_address_async — the only path that reaches a
+                # HID-grabbed device. Default address type (no address_type kwarg)
+                # is what resolves the bonded device; see connect_and_run.
+                return BLEDevice(addr, dev.name, None)
+        except Exception as e:
+            log(f"Probing connected device {info.name!r} failed: "
+                f"{type(e).__name__}: {e}")
+            continue
+    return None
+
+
 async def scan_for_device():
-    """Scan for DEVICE_NAME and return the BLEDevice, or None."""
-    log(f"Scanning for '{DEVICE_NAME}' ({SCAN_TIMEOUT}s)...")
+    """Return a connectable BLEDevice, or None.
+
+    Two-step, strongest signal first (Windows analogue of the macOS path):
+
+    1. The device is bonded as a HID keyboard, hence invisible to BLE scans, so
+       find it among OS-connected peripherals by its custom service UUID and
+       connect by address.
+    2. Fallback: if it is NOT OS-connected (e.g. freshly powered on, only
+       advertising, not yet bonded), scan by name.
+    """
+    device = await retrieve_connected_winrt()
+    if device is not None:
+        return device
+
+    log(f"Not OS-connected; scanning for '{DEVICE_NAME}' ({SCAN_TIMEOUT}s)...")
     device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=SCAN_TIMEOUT)
     if device:
         log(f"Found: {device.address}")
@@ -630,12 +710,14 @@ async def connect_and_run(device, stop_event: asyncio.Event, tray_state=None) ->
     # Rebuild a fresh BleakClient each attempt (locked D-05 recipe).
     client = None
     for attempt in range(CONNECT_RETRIES):
-        # D-05: pass BLEDevice (not address string), address_type="random" (NimBLE
-        # static-random), use_cached_services=False (DIY firmware — WinRT GATT cache
-        # may be stale after firmware reflash).
+        # D-05: pass BLEDevice (not address string) so connect skips the internal
+        # address scan — required because a HID-bonded device is invisible to
+        # scans. Use the DEFAULT address type (NOT address_type="random"): the
+        # device is bonded, so from_bluetooth_address_async resolves it; the
+        # random-type overload was never verified for this path. use_cached_services
+        # =False guards against a stale WinRT GATT cache after a firmware reflash.
         client = BleakClient(
             device,
-            address_type="random",
             use_cached_services=False,
         )
         try:

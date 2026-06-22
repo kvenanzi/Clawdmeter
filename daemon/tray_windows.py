@@ -219,10 +219,25 @@ def main() -> None:
         # the device sits frozen on stale data instead of returning to its waiting
         # screen (SC#3 field report). The timeout caps the block so Quit can never
         # hang if a WinRT disconnect wedges (rare) — we exit anyway as a fallback.
-        if ts.loop is not None and ts.stop_event is not None:
-            ts.loop.call_soon_threadsafe(ts.stop_event.set)
-            daemon_thread.join(timeout=6.0)
-        icon_ref.stop()
+        #
+        # Guard the signalling in try/finally so Quit ALWAYS reaches
+        # icon_ref.stop(). Field bug: when the daemon thread crashes (e.g.
+        # BleakBluetoothNotAvailableError), asyncio.run() closes the loop on its
+        # way out, but ts.loop still references that closed loop. Without the
+        # is_closed() check + guard, call_soon_threadsafe raises "Event loop is
+        # closed", the exception escapes this handler, and icon_ref.stop() never
+        # runs — so the crashed tray refuses to exit.
+        try:
+            if (ts.loop is not None and ts.stop_event is not None
+                    and not ts.loop.is_closed()):
+                ts.loop.call_soon_threadsafe(ts.stop_event.set)
+                daemon_thread.join(timeout=6.0)
+        except RuntimeError:
+            # Loop torn down between the is_closed() check and the call — nothing
+            # left to signal; fall through and exit anyway.
+            pass
+        finally:
+            icon_ref.stop()
 
     def _on_toggle(_icon_ref, _item) -> None:
         if autostart.is_enabled():
